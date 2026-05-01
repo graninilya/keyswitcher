@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# Build artifacts
+App/dist/
+App/icons/AppIcon.iconset/
+
+# Temporary
+/tmp/
+*.log
+
+# Secrets — НЕ КОММИТИТЬ
+sparkle_private_key.pem
+*.p12
+*.cer
+
+# Raw user data we don't redistribute
+dictionaries/raw/
