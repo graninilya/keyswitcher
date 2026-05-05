@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenuBar()
         ensureAccessibility()
+        _ = UpdaterController.shared
 
         let started = EventMonitor.shared.start()
         if started {
@@ -53,6 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(makeItem("Настройки…", action: #selector(openSettings)))
         menu.addItem(makeItem("Проверить разрешения", action: #selector(showAccessibilityHelp)))
+        menu.addItem(.separator())
+        let updatesItem = NSMenuItem(title: "Проверить обновления…",
+                                     action: #selector(UpdaterController.checkForUpdates(_:)),
+                                     keyEquivalent: "")
+        updatesItem.target = UpdaterController.shared
+        menu.addItem(updatesItem)
         menu.addItem(.separator())
         menu.addItem(makeItem("Выйти из Q*Й", action: #selector(quit)))
 

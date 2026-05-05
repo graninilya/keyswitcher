@@ -32,5 +32,15 @@
     <string>NSApplication</string>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 Ilya Granin. MIT License.</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/graninilya/keyswitcher/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>+VYV2MzhMzAQl+Qwb7wPPR4HldDmiINfqpiU8kva9Mo=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key>
+    <true/>
 </dict>
 </plist>

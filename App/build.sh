@@ -20,6 +20,7 @@ swift build -c "$CONFIG"
 # Найдём бинарник
 EXECUTABLE_PATH=$(swift build -c "$CONFIG" --show-bin-path)/"$APP_NAME"
 DICTIONARIES="../dictionaries/processed"
+SPARKLE_FRAMEWORK=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 
 if [[ ! -x "$EXECUTABLE_PATH" ]]; then
     echo "✗ Не найден бинарник: $EXECUTABLE_PATH" >&2
@@ -32,9 +33,17 @@ echo "→ Упаковка .app bundle…"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
+mkdir -p "$APP_BUNDLE/Contents/Frameworks"
 
 cp "$EXECUTABLE_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
+
+if [[ -d "$SPARKLE_FRAMEWORK" ]]; then
+    cp -R "$SPARKLE_FRAMEWORK" "$APP_BUNDLE/Contents/Frameworks/"
+else
+    echo "✗ Sparkle.framework не найден ($SPARKLE_FRAMEWORK). Запустите 'swift package resolve'." >&2
+    exit 1
+fi
 
 # Копируем JSON-словари в Resources/ (Bundle.main их найдёт)
 cp "$DICTIONARIES"/*.json "$APP_BUNDLE/Contents/Resources/"

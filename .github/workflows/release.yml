@@ -30,38 +30,40 @@ jobs:
       - name: Generate dictionary assets
         run: python3 scripts/build_assets.py
 
+      - name: Resolve SPM dependencies
+        run: cd App && swift package resolve
+
       - name: Build .app bundle
-        run: |
-          cd App
-          ./build.sh
+        run: cd App && ./build.sh
 
       - name: Build DMG
         run: |
           chmod +x scripts/make_dmg.sh
           scripts/make_dmg.sh ${{ steps.version.outputs.version }}
 
-      - name: Sign appcast with Sparkle EdDSA
+      - name: Sign DMG with Sparkle EdDSA
+        id: sign
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
+          DMG_PATH="App/dist/QY-${{ steps.version.outputs.version }}.dmg"
+          SIGN_UPDATE="App/.build/artifacts/sparkle/Sparkle/bin/sign_update"
           if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
-            echo "::warning::SPARKLE_PRIVATE_KEY secret not set — skipping appcast signing"
-            exit 0
+            echo "::error::SPARKLE_PRIVATE_KEY secret missing — clients won't accept the update"
+            exit 1
           fi
           echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_key.pem
-          DMG_PATH="App/dist/QY-${{ steps.version.outputs.version }}.dmg"
-          # Sparkle's sign_update tool produces signature for embedding in appcast.xml
-          SIGNATURE=$(App/.build/checkouts/Sparkle/bin/sign_update -f /tmp/sparkle_key.pem "$DMG_PATH" 2>&1 | tail -1)
-          rm /tmp/sparkle_key.pem
-          echo "SIGNATURE=$SIGNATURE" >> $GITHUB_ENV
+          chmod 600 /tmp/sparkle_key.pem
+          SIG_ATTRS=$("$SIGN_UPDATE" -f /tmp/sparkle_key.pem "$DMG_PATH")
+          rm -f /tmp/sparkle_key.pem
+          echo "sig_attrs=$SIG_ATTRS" >> $GITHUB_OUTPUT
 
       - name: Generate appcast.xml
         run: |
           python3 scripts/make_appcast.py \
             --version "${{ steps.version.outputs.version }}" \
             --build "${{ github.run_number }}" \
-            --dmg "App/dist/QY-${{ steps.version.outputs.version }}.dmg" \
-            --signature "${SIGNATURE:-}" \
+            --sig-attrs '${{ steps.sign.outputs.sig_attrs }}' \
             --output App/dist/appcast.xml
 
       - name: Create GitHub release
