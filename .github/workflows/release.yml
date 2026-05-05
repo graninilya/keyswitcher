@@ -24,12 +24,6 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" App/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" App/Info.plist
 
-      - name: Install Python deps
-        run: pip3 install --break-system-packages pillow cairosvg
-
-      - name: Generate dictionary assets
-        run: python3 scripts/build_assets.py
-
       - name: Resolve SPM dependencies
         run: cd App && swift package resolve
 
