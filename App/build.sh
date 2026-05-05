@@ -58,8 +58,14 @@ for f in Sources/keySwitcher/Resources/StatusIcon*; do
     [[ -f "$f" ]] && cp "$f" "$APP_BUNDLE/Contents/Resources/"
 done
 
-echo "→ Ad-hoc подпись…"
-codesign --force --deep --sign - "$APP_BUNDLE"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-keySwitcher Open Source}"
+if security find-certificate -c "$CODESIGN_IDENTITY" >/dev/null 2>&1; then
+    echo "→ Sign with self-signed cert: ${CODESIGN_IDENTITY}"
+    codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+else
+    echo "→ Cert not found: ${CODESIGN_IDENTITY} — ad-hoc fallback (AX permission will reset on update)"
+    codesign --force --deep --sign - "$APP_BUNDLE"
+fi
 
 echo "→ Готово: $APP_BUNDLE"
 echo

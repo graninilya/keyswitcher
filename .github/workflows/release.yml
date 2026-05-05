@@ -27,6 +27,30 @@ jobs:
       - name: Resolve SPM dependencies
         run: cd App && swift package resolve
 
+      - name: Import code-signing certificate
+        env:
+          CODESIGN_P12_B64: ${{ secrets.CODESIGN_P12_B64 }}
+          CODESIGN_P12_PASSWORD: ${{ secrets.CODESIGN_P12_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/codesign.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          P12_PATH="$RUNNER_TEMP/codesign.p12"
+
+          echo "$CODESIGN_P12_B64" | base64 --decode > "$P12_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -P "$CODESIGN_P12_PASSWORD" \
+              -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+              -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Делает временный keychain видимым для codesign в дополнение к login.
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed -e 's/"//g')
+
+          rm -f "$P12_PATH"
+
       - name: Build .app bundle
         run: cd App && ./build.sh
 
