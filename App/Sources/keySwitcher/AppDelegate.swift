@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem!
     private var hotkeys: HotkeyManager!
@@ -16,17 +16,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         modifierMonitor = ModifierHotkeyMonitor()
 
         setupMenuBar()
-        ensureAccessibility()
         _ = UpdaterController.shared
 
-        let started = EventMonitor.shared.start()
-        if started {
-            KeystrokeBuffer.shared.install()
-            modifierMonitor.install()
-            AutoConverter.shared.install()
+        if OnboardingWindowController.shouldShow {
+            // Первый запуск — показать наглядное вступление до запроса AX.
+            OnboardingWindowController.shared.show()
         } else {
-            print("EventMonitor не стартовал — нет AX permission?")
+            ensureAccessibility()
         }
+
+        startMonitorsOrPoll()
 
         rebindHotkeys()
 
@@ -48,32 +47,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.delegate = self  // AX-пункт обновляется при открытии
+
+        // Toggle включено
         let toggleItem = makeItem("Включено", action: #selector(toggleEnabled))
         toggleItem.state = settings.enabled ? .on : .off
         menu.addItem(toggleItem)
+
         menu.addItem(.separator())
-        menu.addItem(makeItem("Настройки…", action: #selector(openSettings)))
-        menu.addItem(makeItem("Проверить разрешения", action: #selector(showAccessibilityHelp)))
+
+        // Настройки + ⌘,
+        let settingsItem = makeItem("Настройки…", action: #selector(openSettings),
+                                    icon: "gearshape")
+        settingsItem.keyEquivalent = ","
+        settingsItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(settingsItem)
+
+        // AX-разрешения — показываем только если не получены (динамически в menuWillOpen)
+        let axItem = makeItem("Дать доступ Accessibility",
+                              action: #selector(showAccessibilityHelp),
+                              icon: "exclamationmark.triangle.fill")
+        axItem.identifier = NSUserInterfaceItemIdentifier("axPermission")
+        menu.addItem(axItem)
+
         menu.addItem(.separator())
+
+        // Проверить обновления
         let updatesItem = NSMenuItem(title: "Проверить обновления…",
                                      action: #selector(UpdaterController.checkForUpdates(_:)),
                                      keyEquivalent: "")
         updatesItem.target = UpdaterController.shared
+        updatesItem.image = menuIcon("arrow.down.circle")
         menu.addItem(updatesItem)
+
+        // О программе
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let aboutItem = makeItem("О Q*Й (v\(version))", action: #selector(showAbout))
+        let aboutItem = makeItem("Об Q*Й — \(version)", action: #selector(openAbout),
+                                 icon: "info.circle")
         menu.addItem(aboutItem)
+
         menu.addItem(.separator())
-        menu.addItem(makeItem("Выйти из Q*Й", action: #selector(quit)))
+
+        // Выйти + ⌘Q
+        let quitItem = makeItem("Выйти из Q*Й", action: #selector(quit),
+                                icon: "power")
+        quitItem.keyEquivalent = "q"
+        quitItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(quitItem)
 
         statusItem.menu = menu
         updateStatusIcon()
     }
 
-    private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
+    private func makeItem(_ title: String, action: Selector, icon: String? = nil) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
+        if let icon = icon {
+            item.image = menuIcon(icon)
+        }
         return item
+    }
+
+    /// SF Symbol с консистентным размером для меню (16pt, regular).
+    private func menuIcon(_ name: String) -> NSImage? {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
     }
 
     private func updateStatusIcon(enabled: Bool? = nil) {
@@ -238,14 +276,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
-    @objc private func showAbout() {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        let alert = NSAlert()
-        alert.messageText = "Q*Й"
-        alert.informativeText = "Версия \(version) (build \(build))\n\nMIT License — open source\nhttps://github.com/graninilya/keyswitcher"
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+    @objc private func openAbout() {
+        SettingsWindowController.shared.show(initialTab: .about)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // Скрываем AX-пункт когда разрешения уже даны — чтобы меню было чище.
+        guard let axItem = menu.items.first(where: {
+            $0.identifier?.rawValue == "axPermission"
+        }) else { return }
+        axItem.isHidden = AXIsProcessTrusted()
     }
 
     @objc private func showAccessibilityHelp() {
@@ -260,6 +302,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let response = alert.runModal()
         if !trusted, response == .alertFirstButtonReturn {
             openAccessibilityPane()
+        }
+    }
+
+    private var axPollTimer: Timer?
+
+    /// Стартует EventMonitor если AX уже даны; иначе поллит каждые 1.5с —
+    /// чтобы юзер дал разрешение в Onboarding и не пришлось перезапускать app.
+    private func startMonitorsOrPoll() {
+        if EventMonitor.shared.start() {
+            KeystrokeBuffer.shared.install()
+            modifierMonitor.install()
+            AutoConverter.shared.install()
+            return
+        }
+        Log.hotkey.info("AX not granted yet — polling")
+        axPollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            if EventMonitor.shared.start() {
+                KeystrokeBuffer.shared.install()
+                self.modifierMonitor.install()
+                AutoConverter.shared.install()
+                Log.hotkey.info("AX granted — monitors started")
+                t.invalidate()
+                self.axPollTimer = nil
+            }
         }
     }
 

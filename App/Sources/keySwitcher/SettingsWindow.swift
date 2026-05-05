@@ -5,21 +5,24 @@ import Sparkle
 final class SettingsWindowController {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
+    private var rootView: SettingsRootHosting?
 
     private init() {}
 
-    func show() {
+    func show(initialTab: SettingsTab = .hotkeys) {
         if let w = window {
+            rootView?.selection = initialTab
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let view = SettingsView()
-        let host = NSHostingController(rootView: view)
-        let w = NSWindow(contentViewController: host)
+        let host = SettingsRootHosting(selection: initialTab)
+        self.rootView = host
+        let hosting = NSHostingController(rootView: SettingsRoot(host: host))
+        let w = NSWindow(contentViewController: hosting)
         w.title = "Q*Й — настройки"
         w.styleMask = [.titled, .closable]
-        w.setContentSize(NSSize(width: 520, height: 420))
+        w.setContentSize(NSSize(width: 560, height: 520))
         w.center()
         w.isReleasedWhenClosed = false
         self.window = w
@@ -29,28 +32,75 @@ final class SettingsWindowController {
 }
 
 
-struct SettingsView: View {
+enum SettingsTab: Hashable {
+    case hotkeys, behavior, updates, about
+}
+
+/// Класс-обёртка чтобы SettingsWindowController мог менять выбранный таб извне.
+final class SettingsRootHosting: ObservableObject {
+    @Published var selection: SettingsTab
+    init(selection: SettingsTab) { self.selection = selection }
+}
+
+struct SettingsRoot: View {
+    @ObservedObject var host: SettingsRootHosting
     @ObservedObject private var settings = Settings.shared
-    @ObservedObject private var updaterPrefs = UpdaterPreferences.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
+        VStack(spacing: 0) {
+            // Глобальный enable/disable — над табами, всегда виден.
+            HStack(spacing: 10) {
                 Toggle("", isOn: $settings.enabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
-                Text("Включено")
-                    .font(.system(size: 14, weight: .medium))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Q*Й")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(settings.enabled ? "Активно" : "Выключено")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
                 Spacer()
             }
-            .padding(.bottom, 18)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .windowBackgroundColor))
 
-            sectionHeader("Горячие клавиши")
+            Divider()
 
-            VStack(spacing: 8) {
+            TabView(selection: $host.selection) {
+                HotkeysTab()
+                    .tabItem { Label("Хоткеи", systemImage: "keyboard") }
+                    .tag(SettingsTab.hotkeys)
+                BehaviorTab()
+                    .tabItem { Label("Поведение", systemImage: "slider.horizontal.3") }
+                    .tag(SettingsTab.behavior)
+                UpdatesTab()
+                    .tabItem { Label("Обновления", systemImage: "arrow.down.circle") }
+                    .tag(SettingsTab.updates)
+                AboutTab()
+                    .tabItem { Label("О программе", systemImage: "info.circle") }
+                    .tag(SettingsTab.about)
+            }
+            .padding(.top, 8)
+        }
+        .frame(width: 560, height: 520)
+    }
+}
+
+
+// MARK: - Хоткеи
+
+struct HotkeysTab: View {
+    @ObservedObject private var settings = Settings.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
                 HotkeyRow(
-                    title: "Умная конверсия",
-                    subtitle: "Выделение или последнее слово",
+                    title: "Сменить раскладку",
+                    subtitle: "Выделение / последнее слово; повторное нажатие в 5с — откат",
+                    icon: "arrow.left.arrow.right",
                     binding: Binding(
                         get: { settings.hotkeys.smartConvert },
                         set: { settings.hotkeys.smartConvert = $0 }
@@ -58,8 +108,9 @@ struct SettingsView: View {
                     allowsModifierOnly: true
                 )
                 HotkeyRow(
-                    title: "Принудительная смена раскладки",
-                    subtitle: "Без проверки детектором",
+                    title: "Принудительная смена",
+                    subtitle: "Игнорирует детектор, всегда свапает",
+                    icon: "bolt.fill",
                     binding: Binding(
                         get: { settings.hotkeys.forceSwap },
                         set: { settings.hotkeys.forceSwap = $0 }
@@ -68,7 +119,8 @@ struct SettingsView: View {
                 )
                 HotkeyRow(
                     title: "Транслитерация",
-                    subtitle: "Кириллица → латиница (по ГОСТ)",
+                    subtitle: "Кириллица → латиница (ГОСТ 7.79)",
+                    icon: "character.book.closed",
                     binding: Binding(
                         get: { settings.hotkeys.transliterate },
                         set: { settings.hotkeys.transliterate = $0 }
@@ -77,72 +129,225 @@ struct SettingsView: View {
                 )
                 HotkeyRow(
                     title: "Включить / выключить Q*Й",
-                    subtitle: nil,
+                    subtitle: "Работает даже когда приложение выключено",
+                    icon: "power",
                     binding: Binding(
                         get: { settings.hotkeys.toggleEnabled },
                         set: { settings.hotkeys.toggleEnabled = $0 }
                     ),
                     allowsModifierOnly: true
                 )
-            }
-            .padding(.bottom, 18)
 
-            sectionHeader("Поведение")
-
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Звуковой сигнал на замену", isOn: $settings.soundsEnabled)
-                Toggle("Запускать при входе в систему", isOn: $settings.launchAtLogin)
-            }
-            .padding(.bottom, 18)
-
-            sectionHeader("Обновления")
-
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Проверять обновления автоматически", isOn: $updaterPrefs.autoCheckEnabled)
-                Toggle("Скачивать и ставить в фоне (без подтверждения)",
-                       isOn: $updaterPrefs.autoInstallEnabled)
-                    .disabled(!updaterPrefs.autoCheckEnabled)
-                HStack(spacing: 8) {
-                    Button("Проверить сейчас") {
-                        UpdaterController.shared.checkForUpdates(nil)
+                HStack {
+                    Spacer()
+                    Button("Сбросить хоткеи") {
+                        settings.hotkeys = HotkeyConfig.default
                     }
                     .controlSize(.small)
-                    if let last = updaterPrefs.lastCheckText {
+                }
+                .padding(.top, 8)
+            }
+            .padding(20)
+        }
+    }
+}
+
+// MARK: - Поведение
+
+struct BehaviorTab: View {
+    @ObservedObject private var settings = Settings.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                BehaviorRow(
+                    icon: "speaker.wave.2",
+                    title: "Звуковой сигнал на замену",
+                    subtitle: "Короткий тик когда сработала автоконвертация"
+                ) {
+                    Toggle("", isOn: $settings.soundsEnabled).labelsHidden()
+                }
+                BehaviorRow(
+                    icon: "power",
+                    title: "Запускать при входе в систему",
+                    subtitle: "Регистрирует app в Launch Services"
+                ) {
+                    Toggle("", isOn: $settings.launchAtLogin).labelsHidden()
+                }
+            }
+            .padding(20)
+        }
+    }
+}
+
+private struct BehaviorRow<Trailing: View>: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(.accentColor)
+                .frame(width: 28, alignment: .center)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13))
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            trailing()
+        }
+    }
+}
+
+// MARK: - Обновления
+
+struct UpdatesTab: View {
+    @ObservedObject private var prefs = UpdaterPreferences.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                BehaviorRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Проверять обновления автоматически",
+                    subtitle: "Раз в сутки запрос к GitHub Releases"
+                ) {
+                    Toggle("", isOn: $prefs.autoCheckEnabled).labelsHidden()
+                }
+                BehaviorRow(
+                    icon: "tray.and.arrow.down",
+                    title: "Скачивать и ставить тихо",
+                    subtitle: "Без подтверждающего диалога"
+                ) {
+                    Toggle("", isOn: $prefs.autoInstallEnabled).labelsHidden()
+                }
+                .opacity(prefs.autoCheckEnabled ? 1.0 : 0.5)
+                .disabled(!prefs.autoCheckEnabled)
+
+                Divider().padding(.vertical, 4)
+
+                HStack {
+                    Button {
+                        UpdaterController.shared.checkForUpdates(nil)
+                    } label: {
+                        Label("Проверить сейчас", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Spacer()
+
+                    if let last = prefs.lastCheckText {
                         Text(last)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
                 }
             }
-
-            Spacer()
-
-            HStack {
-                Spacer()
-                Button("Сбросить хоткеи") {
-                    settings.hotkeys = HotkeyConfig.default
-                }
-                .controlSize(.small)
-            }
-            .padding(.top, 12)
+            .padding(20)
         }
-        .padding(24)
-        .frame(width: 540, height: 460)
+    }
+}
+
+// MARK: - О программе
+
+struct AboutTab: View {
+    private var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+    private var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(.secondary)
-            .tracking(0.5)
-            .padding(.bottom, 8)
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer().frame(height: 8)
+
+            iconView()
+                .frame(width: 96, height: 96)
+
+            Text("Версия \(version) (build \(build))")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+
+            Text("Smart keyboard layout switcher\nдля macOS на Apple Silicon")
+                .multilineTextAlignment(.center)
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 32)
+
+            Divider().padding(.horizontal, 80)
+
+            HStack(spacing: 18) {
+                AboutLink(label: "GitHub", icon: "chevron.left.forwardslash.chevron.right",
+                          url: "https://github.com/graninilya/keyswitcher")
+                AboutLink(label: "Лицензия MIT", icon: "doc.text",
+                          url: "https://github.com/graninilya/keyswitcher/blob/main/LICENSE")
+                AboutLink(label: "Сообщить о баге", icon: "exclamationmark.bubble",
+                          url: "https://github.com/graninilya/keyswitcher/issues")
+            }
+
+            Text("© 2026 Ilya Granin")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .padding(.top, 4)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func iconView() -> some View {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let img = NSImage(contentsOf: url) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+        } else if let url = Bundle.main.url(forResource: "StatusIcon", withExtension: "pdf"),
+                  let img = NSImage(contentsOf: url) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+        } else {
+            Image(systemName: "keyboard").font(.system(size: 64))
+        }
+    }
+}
+
+private struct AboutLink: View {
+    let label: String
+    let icon: String
+    let url: String
+
+    var body: some View {
+        Button {
+            if let u = URL(string: url) { NSWorkspace.shared.open(u) }
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 18))
+                Text(label).font(.system(size: 11))
+            }
+            .frame(width: 100)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.accentColor)
     }
 }
 
 
+// MARK: - Hotkey row (общий компонент)
+
 struct HotkeyRow: View {
     let title: String
     var subtitle: String? = nil
+    var icon: String? = nil
     @Binding var binding: HotkeyBinding
     let allowsModifierOnly: Bool
 
@@ -150,6 +355,13 @@ struct HotkeyRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundColor(.accentColor)
+                    .frame(width: 28, alignment: .center)
+            }
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 13))
@@ -176,7 +388,6 @@ struct HotkeyRow: View {
             .buttonStyle(.plain)
             .help("Отключить")
         }
-        .padding(.vertical, 2)
     }
 }
 
