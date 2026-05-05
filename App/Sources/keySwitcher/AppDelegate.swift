@@ -60,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      keyEquivalent: "")
         updatesItem.target = UpdaterController.shared
         menu.addItem(updatesItem)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let aboutItem = makeItem("О Q*Й (v\(version))", action: #selector(showAbout))
+        menu.addItem(aboutItem)
         menu.addItem(.separator())
         menu.addItem(makeItem("Выйти из Q*Й", action: #selector(quit)))
 
@@ -233,6 +236,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func showAbout() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        let alert = NSAlert()
+        alert.messageText = "Q*Й"
+        alert.informativeText = "Версия \(version) (build \(build))\n\nMIT License — open source\nhttps://github.com/graninilya/keyswitcher"
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc private func showAccessibilityHelp() {
