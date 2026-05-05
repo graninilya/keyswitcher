@@ -11,6 +11,12 @@ final class LayoutMap {
     private let badCyrillic: Set<String>
     private let badLatinLengths: [Int]
     private let badCyrillicLengths: [Int]
+    private let trigramsRu: [String: Double]
+    private let trigramsEn: [String: Double]
+    /// Среднее лог-вероятностей триграмм. Пропуски штрафуются `missingTrigramPenalty`.
+    /// Слова из реального языка обычно даёт −5…−15. Случайный мусор ≤ −20.
+    private let plausibilityThreshold: Double = -20.0
+    private let missingTrigramPenalty: Double = -25.0
 
     private init() {
         let standardLayout: LayoutFile = LayoutMap.load("layout_map")
@@ -42,6 +48,9 @@ final class LayoutMap {
         self.badCyrillic = Set(triggers.cyrillic)
         self.badLatinLengths = Array(Set(triggers.latin.map { $0.count })).sorted()
         self.badCyrillicLengths = Array(Set(triggers.cyrillic.map { $0.count })).sorted()
+
+        self.trigramsRu = LayoutMap.load("trigrams_ru")
+        self.trigramsEn = LayoutMap.load("trigrams_en")
 
         // Разговорные слова и заимствования, которых нет в hunspell base forms
         let extraRu: Set<String> = [
@@ -139,11 +148,22 @@ final class LayoutMap {
                            || (hasEnLayoutPunct && (hasLat || hasCyr))
             guard isCandidate else { return nil }
 
-            // Layout-пунктуация в конце (`Hello,`) = настоящая пунктуация → не трогаем валидное слово.
-            // В начале (`.,rf`, `'kkf`) = промах раскладкой → нормализуем даже если буквы в словаре.
+            // Layout-пунктуация в конце (`Hello,`, `работает.`) = настоящая пунктуация.
+            // В начале (`.,rf`, `'kkf`) = промах раскладкой → нормализуем.
             let layoutPunct: Set<Character> = [";", "[", "]", "'", "`", "\\", ",", "."]
             let firstIsLayoutPunct = lower.first.map { layoutPunct.contains($0) } ?? false
             if !firstIsLayoutPunct {
+                // Ядро (без хвостовой layout-пунктуации) полностью одной алфавитной системы → НЕ трогаем.
+                // Не зависит от словаря: словоформы (работает, букву) не лежат в hunspell base forms.
+                let trailingPunctCount = lower.reversed().prefix { layoutPunct.contains($0) }.count
+                if trailingPunctCount > 0 {
+                    let core = String(lower.dropLast(trailingPunctCount))
+                    if !core.isEmpty {
+                        let coreAllCyr = core.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" }
+                        let coreAllLat = core.allSatisfy { ("a"..."z").contains($0) }
+                        if coreAllCyr || coreAllLat { return nil }
+                    }
+                }
                 if !hasCyr && hasLat && wordsEn.contains(lettersLat) { return nil }
                 if !hasLat && hasCyr && wordsRu.contains(lettersCyr) { return nil }
             }
@@ -165,28 +185,43 @@ final class LayoutMap {
         let candidate = swap(word)
         let candidateLower = candidate.lowercased()
 
-        let triggers = isLatin ? badLatin : badCyrillic
-
-        if triggers.contains(lower) { return candidate }
-
-        if isLatin && wordsRu.contains(candidateLower) { return candidate }
-        if isCyrillic && wordsEn.contains(candidateLower) { return candidate }
-
-        let oppositeTriggers = isLatin ? badCyrillic : badLatin
-        let wordScore = weightedBadScore(in: lower, triggers: triggers)
-        let swapScore = weightedBadScore(in: candidateLower, triggers: oppositeTriggers)
-        if wordScore >= 2 && Double(wordScore) >= Double(swapScore) * 1.8 {
-            return candidate
+        // Сравнительный триграммный фильтр: «куда лучше укладывается слово».
+        // - буквы (ru=-13) vs ,erds (en=-15.5)         → ru лучше → keep
+        // - руддщ (ru=-15.9) vs hello (en=-7.7)        → swap намного лучше → convert
+        // - ghbdtn (en=-17.9) vs привет (ru=-7)        → swap → convert
+        // Покрывает словоформы которых нет в плоском словаре.
+        let originalScore: Double
+        let swappedScore: Double
+        if isCyrillic {
+            originalScore = trigramPlausibility(lower, table: trigramsRu)
+            swappedScore = trigramPlausibility(candidateLower, table: trigramsEn)
+        } else {
+            originalScore = trigramPlausibility(lower, table: trigramsEn)
+            swappedScore = trigramPlausibility(candidateLower, table: trigramsRu)
         }
-
-        // Контекст-aware fallback: `rf` есть в EN dict, но в RU контексте это `к-а` промах
-        let context = KeystrokeBuffer.shared.dominantContext
-        if wordScore >= 1 {
-            if isLatin && context == .russian { return candidate }
-            if isCyrillic && context == .english { return candidate }
+        // Запас 2.0 nat/триграмма — нужно «сильно лучше» чтобы свапнуть.
+        // Без запаса возможны ложные свапы коротких/редких слов.
+        if originalScore >= swappedScore - 2.0 {
+            return nil
         }
+        return candidate
+    }
 
-        return nil
+    /// Среднее лог-вероятностей триграмм (с " " по краям).
+    /// Высокий результат = слово выглядит «как настоящее» в данном языке —
+    /// покрывает падежи/спряжения которых нет в плоском словаре.
+    private func trigramPlausibility(_ word: String, table: [String: Double]) -> Double {
+        let padded = " " + word.lowercased() + " "
+        let chars = Array(padded)
+        guard chars.count >= 3 else { return -.infinity }
+        var sum = 0.0
+        var count = 0
+        for i in 0...(chars.count - 3) {
+            let tg = String(chars[i..<(i + 3)])
+            sum += table[tg] ?? missingTrigramPenalty
+            count += 1
+        }
+        return count > 0 ? sum / Double(count) : -.infinity
     }
 
     /// Длинные подстроки весят больше — они более дискриминативны (3→1, 4→2, 5→3, 6→4).

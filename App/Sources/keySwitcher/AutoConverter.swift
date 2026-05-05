@@ -12,17 +12,17 @@ final class AutoConverter {
     private final class Replacement {
         let original: String
         let converted: String
-        /// nil = замена без хвостового разделителя (например, выделение)
-        let trigger: Character?
+        /// Хвост после слова (trigger + последующие пробелы/пунктуация). "" для selection-replace.
+        let tail: String
         let originalLayout: TISInputSource?
         var state: DisplayState
         var lastChangeTime: Date
 
-        init(original: String, converted: String, trigger: Character?,
+        init(original: String, converted: String, tail: String,
              originalLayout: TISInputSource?, state: DisplayState) {
             self.original = original
             self.converted = converted
-            self.trigger = trigger
+            self.tail = tail
             self.originalLayout = originalLayout
             self.state = state
             self.lastChangeTime = Date()
@@ -31,9 +31,6 @@ final class AutoConverter {
 
     private var lastReplacement: Replacement?
     private let toggleWindow: TimeInterval = 5.0
-    /// Окно после синтетических действий, чтобы собственные key events
-    /// не инвалидировали lastReplacement.
-    private var ignoreInvalidationsUntil: Date = .distantPast
 
     private init() {}
 
@@ -43,9 +40,23 @@ final class AutoConverter {
         }
         EventMonitor.shared.onKeyDown { [weak self] _ in
             guard let self = self else { return }
-            if Date() > self.ignoreInvalidationsUntil {
+            // KeystrokeBuffer.muted = идёт наша же синтетическая инъекция (backspace+type).
+            // Только настоящие пользовательские key-events должны сбрасывать lastReplacement.
+            if !KeystrokeBuffer.shared.muted {
                 self.lastReplacement = nil
             }
+        }
+        // Клик мышью = пользователь сдвинул каретку или сделал новое выделение.
+        // Старый toggle становится бессмысленным — applyState затёр бы текст у нового курсора.
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            self?.lastReplacement = nil
+        }
+        // Смена активного приложения = почти наверняка новый контекст ввода.
+        NotificationCenter.default.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.lastReplacement = nil
         }
     }
 
@@ -66,7 +77,7 @@ final class AutoConverter {
         )
 
         let replacement = Replacement(
-            original: word, converted: converted, trigger: trigger,
+            original: word, converted: converted, tail: String(trigger),
             originalLayout: savedLayout, state: .original
         )
         lastReplacement = replacement
@@ -89,7 +100,6 @@ final class AutoConverter {
                 buffer.replaceFromEnd(offset: offsetFromEnd, with: r.conv)
             }
             buffer.replaceLastInHistory(with: converted)
-            ignoreInvalidationsUntil = Date().addingTimeInterval(0.3)
         } else {
             applyState(.converted)
             buffer.replaceLastInHistory(with: converted)
@@ -132,15 +142,14 @@ final class AutoConverter {
         return chain.reversed()
     }
 
-    func record(original: String, converted: String, trigger: Character?,
+    func record(original: String, converted: String, tail: String,
                 originalLayout: TISInputSource?) {
         let replacement = Replacement(
-            original: original, converted: converted, trigger: trigger,
+            original: original, converted: converted, tail: tail,
             originalLayout: originalLayout ?? InputSourceSwitcher.current(),
             state: .converted
         )
         lastReplacement = replacement
-        ignoreInvalidationsUntil = Date().addingTimeInterval(0.3)
     }
 
     func canToggle() -> Bool {
@@ -159,11 +168,11 @@ final class AutoConverter {
 
         let currentText = (last.state == .converted) ? last.converted : last.original
         let targetText  = (target      == .converted) ? last.converted : last.original
-        let triggerStr = last.trigger.map(String.init) ?? ""
+        let tail = last.tail
 
-        let toDelete = currentText.count + triggerStr.count
+        let toDelete = currentText.count + tail.count
         sendBackspaces(toDelete)
-        typeUnicode(targetText + triggerStr)
+        typeUnicode(targetText + tail)
 
         if target == .original, let layout = last.originalLayout {
             InputSourceSwitcher.restore(layout)
@@ -173,7 +182,6 @@ final class AutoConverter {
 
         last.state = target
         last.lastChangeTime = Date()
-        ignoreInvalidationsUntil = Date().addingTimeInterval(0.3)
     }
 
     private func sendBackspaces(_ count: Int) {

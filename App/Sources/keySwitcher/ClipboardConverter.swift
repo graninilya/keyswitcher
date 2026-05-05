@@ -6,11 +6,11 @@ final class ClipboardConverter {
         let buffer = KeystrokeBuffer.shared
         let hasBuffer = !buffer.currentWord.isEmpty || !buffer.lastWord.isEmpty
         let selection = SelectionDetector.currentSelectionInfo()
-        let typingNow = Date().timeIntervalSince(buffer.lastActivity) < 2.0
-        Log.clipboard.info("smartConvert: hasBuffer=\(hasBuffer) typingNow=\(typingNow) cur='\(buffer.currentWord, privacy: .public)' last='\(buffer.lastWord, privacy: .public)' selection=\(String(describing: selection?.text), privacy: .public) partial=\(selection?.isPartial ?? false)")
+        Log.clipboard.info("smartConvert: hasBuffer=\(hasBuffer) cur='\(buffer.currentWord, privacy: .public)' last='\(buffer.lastWord, privacy: .public)' selection=\(String(describing: selection?.text), privacy: .public)")
 
-        if let sel = selection, sel.isPartial {
-            Log.clipboard.info("→ SELECTION path (partial)")
+        // 1. AX выдал текст выделения — самый дешёвый путь.
+        if let sel = selection, !sel.text.isEmpty {
+            Log.clipboard.info("→ SELECTION path (\(sel.text.count) chars)")
             let pb = NSPasteboard.general
             let saved = backupPasteboard(pb)
             replaceSelection(original: sel.text, transform: transform,
@@ -18,29 +18,44 @@ final class ClipboardConverter {
             return
         }
 
-        // Electron часто рапортует что выделена «вся строка» когда юзер просто печатает —
-        // в этом случае доверяем буферу, а не AX selection.
-        if let sel = selection, !sel.isPartial {
-            if typingNow && hasBuffer {
-                Log.clipboard.info("→ BUFFER path (typing, ignoring whole-text selection as suspicious)")
-                convertLastWord(transform: transform)
+        // 2. AX молчит — пробуем Cmd+C ДО BUFFER, потому что в Electron/web AX врёт
+        //    но выделение реально есть. Если Cmd+C ничего не скопировал → BUFFER.
+        Log.clipboard.info("→ CLIPBOARD FALLBACK (Cmd+C)")
+        clipboardFallbackConvert(transform: transform, onNoSelection: { [weak self] in
+            guard let self = self else { return }
+            if hasBuffer {
+                Log.clipboard.info("→ BUFFER path (after Cmd+C miss)")
+                self.convertLastWord(transform: transform)
+            } else {
+                Log.clipboard.info("→ nothing")
+            }
+        })
+    }
+
+    private func clipboardFallbackConvert(
+        transform: @escaping (String) -> String?,
+        onNoSelection: @escaping () -> Void
+    ) {
+        let pb = NSPasteboard.general
+        let savedItems = backupPasteboard(pb)
+        let prevChangeCount = pb.changeCount
+
+        sendCommand(keyCode: 8)  // Cmd+C (kVK_ANSI_C)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self = self else { return }
+            let copied = pb.string(forType: .string)
+            guard pb.changeCount > prevChangeCount,
+                  let original = copied, !original.isEmpty else {
+                Log.clipboard.info("  fallback: no selection (changeCount unchanged or empty)")
+                self.restorePasteboard(pb, items: savedItems)
+                onNoSelection()
                 return
             }
-            Log.clipboard.info("→ SELECTION path (whole)")
-            let pb = NSPasteboard.general
-            let saved = backupPasteboard(pb)
-            replaceSelection(original: sel.text, transform: transform,
-                             pasteboard: pb, savedItems: saved)
-            return
+            Log.clipboard.info("  fallback: copied '\(original, privacy: .public)'")
+            self.replaceSelection(original: original, transform: transform,
+                                  pasteboard: pb, savedItems: savedItems)
         }
-
-        if hasBuffer {
-            Log.clipboard.info("→ BUFFER path")
-            convertLastWord(transform: transform)
-            return
-        }
-
-        Log.clipboard.info("→ nothing")
     }
 
     private func convertSelectedText(original: String, transform: @escaping (String) -> String?) {
@@ -70,14 +85,16 @@ final class ClipboardConverter {
         }
         let savedLayout = InputSourceSwitcher.current()
         DispatchQueue.main.async {
-            pasteboard.clearContents()
-            pasteboard.setString(new, forType: .string)
-            self.sendCommand(keyCode: 9)  // Cmd+V
+            // typeUnicode шлёт один keyDown с готовой UTF-16 строкой — для активного
+            // text-input это эквивалентно "пользователь печатает", что заменяет
+            // выделение целиком (стандартное поведение всех NSText-полей).
+            // Cmd+V менее надёжен: в Electron/Notes/Word иногда не перезаписывает selection.
+            self.typeUnicode(new)
             if let lang = new.inputLanguageForLayout {
                 InputSourceSwitcher.switchTo(lang)
             }
             AutoConverter.shared.record(
-                original: original, converted: new, trigger: nil, originalLayout: savedLayout
+                original: original, converted: new, tail: "", originalLayout: savedLayout
             )
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.restorePasteboard(pasteboard, items: savedItems)
@@ -104,24 +121,25 @@ final class ClipboardConverter {
         }
         Log.clipboard.info("  → converting '\(word, privacy: .public)' to '\(converted, privacy: .public)'")
 
-        let trigger: Character? = isMidTyping ? nil : buffer.lastTrigger
-        let triggerStr = trigger.map(String.init) ?? ""
-        let toDelete = word.count + triggerStr.count
-        Log.clipboard.info("  backspaces=\(toDelete) typing='\(converted + triggerStr, privacy: .public)'")
+        // Tail = всё что юзер напечатал ПОСЛЕ слова (trigger + последующие пробелы/пунктуация),
+        // если мы не в середине набора. Иначе ничего после слова нет.
+        let tail = isMidTyping ? "" : buffer.lastTail
+        let toDelete = word.count + tail.count
+        Log.clipboard.info("  backspaces=\(toDelete) typing='\(converted + tail, privacy: .public)' (tail='\(tail, privacy: .public)')")
 
         let savedLayout = InputSourceSwitcher.current()
 
         for _ in 0..<toDelete {
             sendKey(keyCode: 51)
         }
-        typeUnicode(converted + triggerStr)
+        typeUnicode(converted + tail)
 
         if let lang = converted.inputLanguageForLayout {
             InputSourceSwitcher.switchTo(lang)
         }
 
         AutoConverter.shared.record(
-            original: word, converted: converted, trigger: trigger, originalLayout: savedLayout
+            original: word, converted: converted, tail: tail, originalLayout: savedLayout
         )
 
         buffer.clear()

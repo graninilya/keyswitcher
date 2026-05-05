@@ -102,6 +102,10 @@ final class KeystrokeBuffer {
     private(set) var currentWord: String = ""
     private(set) var lastWord: String = ""
     private(set) var lastTrigger: Character? = nil
+    /// Все символы между концом lastWord и началом нового слова (включая trigger,
+    /// последующие пробелы/знаки препинания). Нужен чтобы корректно посчитать
+    /// сколько backspace'ов сделать перед re-typing.
+    private(set) var lastTail: String = ""
     private(set) var lastActivity: Date = .distantPast
 
     private var recentWords: [String] = []
@@ -206,9 +210,14 @@ final class KeystrokeBuffer {
         // включаем в слово, чтобы автоконвертер мог распознать промах раскладки
         let layoutMappedChars: Set<Character> = [";", "[", "]", "`", "\\", "'", ",", "."]
         if ch.isLetter || ch == "-" || layoutMappedChars.contains(ch) {
+            // Начало нового слова — сбрасываем накопленный tail
+            if currentWord.isEmpty {
+                lastTail = ""
+            }
             currentWord.append(ch)
         } else {
             flushAndReset(trigger: ch)
+            lastTail.append(ch)
         }
     }
 
@@ -217,6 +226,7 @@ final class KeystrokeBuffer {
             let completed = currentWord
             lastWord = completed
             lastTrigger = trigger
+            lastTail = ""
             currentWord = ""
             recentWords.append(completed)
             if recentWords.count > recentWordsCapacity {
@@ -238,6 +248,7 @@ final class KeystrokeBuffer {
         currentWord = ""
         lastWord = ""
         lastTrigger = nil
+        lastTail = ""
     }
 
     func clearContext() {
@@ -316,6 +327,7 @@ final class ModifierHotkeyMonitor {
                 let held = Date().timeIntervalSince(t.pressTime)
                 if !t.contaminated && held < timeout {
                     if let action = bindings[keyCode] {
+                        Log.hotkey.info("modifier-hotkey kc=\(keyCode) held=\(String(format: "%.2f", held))s")
                         DispatchQueue.main.async { action() }
                     }
                 }

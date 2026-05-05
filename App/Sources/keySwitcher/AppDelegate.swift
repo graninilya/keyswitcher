@@ -158,24 +158,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func smartConvert() {
         logHotkey("smartConvert")
+        // Punto-style: повторное нажатие в окне ~5с откатывает последнюю замену
         if AutoConverter.shared.canToggle() {
             AutoConverter.shared.toggle()
             return
         }
+        // Иначе — всегда принудительно свапаем. Пользователь жмёт Option потому что
+        // знает: текущее слово/выделение в неправильной раскладке.
         converter.smartConvert { text in
             if text.contains(" ") || text.contains("\n") {
-                return Self.convertMultiWord(text)
+                if let multi = Self.convertMultiWord(text) { return multi }
             }
-            if let result = LayoutMap.shared.autoConvert(text) {
-                return result
-            }
-            let cyrLet = text.filter { ("а"..."я").contains($0) || $0 == "ё"
-                                     || ("А"..."Я").contains($0) || $0 == "Ё" }.count
-            let latLet = text.filter { ("a"..."z").contains($0) || ("A"..."Z").contains($0) }.count
-            let hasLayoutPunct = text.contains { ";[],.'`\\".contains($0) }
-            let mixed = (cyrLet > 0 && latLet > 0)
-                     || (hasLayoutPunct && (cyrLet > 0 || latLet > 0))
-            guard mixed else { return nil }
             let candidate = LayoutMap.shared.swap(text)
             return candidate != text ? candidate : nil
         }
