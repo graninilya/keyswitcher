@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Sparkle
 
 final class SettingsWindowController {
     static let shared = SettingsWindowController()
@@ -30,6 +31,7 @@ final class SettingsWindowController {
 
 struct SettingsView: View {
     @ObservedObject private var settings = Settings.shared
+    @ObservedObject private var updaterPrefs = UpdaterPreferences.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -90,6 +92,27 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Звуковой сигнал на замену", isOn: $settings.soundsEnabled)
                 Toggle("Запускать при входе в систему", isOn: $settings.launchAtLogin)
+            }
+            .padding(.bottom, 18)
+
+            sectionHeader("Обновления")
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Проверять обновления автоматически", isOn: $updaterPrefs.autoCheckEnabled)
+                Toggle("Скачивать и ставить в фоне (без подтверждения)",
+                       isOn: $updaterPrefs.autoInstallEnabled)
+                    .disabled(!updaterPrefs.autoCheckEnabled)
+                HStack(spacing: 8) {
+                    Button("Проверить сейчас") {
+                        UpdaterController.shared.checkForUpdates(nil)
+                    }
+                    .controlSize(.small)
+                    if let last = updaterPrefs.lastCheckText {
+                        Text(last)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
 
             Spacer()
