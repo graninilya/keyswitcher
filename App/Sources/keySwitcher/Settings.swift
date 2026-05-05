@@ -2,17 +2,13 @@ import Foundation
 import AppKit
 import ServiceManagement
 
-/// Конфигурация хоткеев. Хранится в UserDefaults как JSON.
 struct HotkeyConfig: Codable {
-    /// Главный «умный» хоткей: конвертирует выделение/последнее слово или тоггает последнюю замену.
     var smartConvert: HotkeyBinding
     var forceSwap: HotkeyBinding
     var transliterate: HotkeyBinding
-    /// Включить/выключить keySwitcher целиком (быстрый «таймаут» перед паролем и т.п.).
     var toggleEnabled: HotkeyBinding
 
-    // Свой init с дефолтным значением для toggleEnabled — чтобы старые сохранения
-    // (без этого поля) корректно загружались.
+    // Дефолт для toggleEnabled — чтобы старые сохранения без этого поля корректно загружались
     init(
         smartConvert: HotkeyBinding,
         forceSwap: HotkeyBinding,
@@ -60,7 +56,6 @@ enum HotkeyBinding: Codable, Equatable {
 }
 
 struct KeyCombo: Codable, Equatable {
-    /// Битмаска NSEvent.ModifierFlags (.command, .option, .shift, .control)
     var modifiersRaw: UInt
     var keyCode: Int
 
@@ -100,7 +95,6 @@ func keyCodeName(_ code: Int) -> String {
 }
 
 
-/// Глобальные настройки.
 final class Settings: ObservableObject {
     static let shared = Settings()
 

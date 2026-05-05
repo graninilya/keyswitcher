@@ -1,8 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Глобальный CGEventTap. Один экземпляр на приложение.
-/// Подписывается на keyDown и flagsChanged, раздаёт событиям подписчикам.
 final class EventMonitor {
     static let shared = EventMonitor()
 
@@ -17,7 +15,7 @@ final class EventMonitor {
 
     private init() {}
 
-    /// Запускает CGEventTap. Возвращает false если нет AX permission.
+    /// Возвращает false если нет AX permission.
     @discardableResult
     func start() -> Bool {
         guard tap == nil else { return true }
@@ -98,28 +96,18 @@ final class EventMonitor {
 }
 
 
-// MARK: - KeystrokeBuffer
-
-/// Отслеживает последнее набираемое слово.
-/// При не-буквенной клавише (пробел, Enter, пунктуация) фиксирует слово как "последнее".
-/// Если включён Secure Input (поле пароля) — буфер отключается полностью.
 final class KeystrokeBuffer {
     static let shared = KeystrokeBuffer()
 
     private(set) var currentWord: String = ""
     private(set) var lastWord: String = ""
-    /// Какой разделитель завершил последнее слово (пробел, точка, запятая…).
-    /// nil если слово ещё не закончено.
     private(set) var lastTrigger: Character? = nil
-    /// Время последней пользовательской активности (любое нажатие).
     private(set) var lastActivity: Date = .distantPast
 
-    /// Последние N набранных слов — для определения «доминирующего языка контекста».
     private var recentWords: [String] = []
     private let recentWordsCapacity = 5
 
-    /// Доминирующий язык в контексте набора.
-    /// Смотрит только на последние ~3 слова — отзывчиво при смене языка.
+    /// Смотрит только на последние ~3 слова — иначе слабая реакция на смену языка.
     var dominantContext: InputLanguage? {
         let recent = Array(recentWords.suffix(3))
         var cyr = 0, lat = 0
@@ -133,31 +121,24 @@ final class KeystrokeBuffer {
             if lat > cyr { return .english }
         }
 
-        // Если в последних словах буквы на полу — fallback на текст документа
         return ContextResolver.dominantLanguageInFocusedElement()
     }
 
-    /// Заменить последнее слово в recentWords (вызывается после auto-conversion,
-    /// чтобы контекст отражал то что ДЕЙСТВИТЕЛЬНО в документе).
     func replaceLastInHistory(with converted: String) {
         guard !recentWords.isEmpty else { return }
         recentWords[recentWords.count - 1] = converted
     }
 
-    /// Доступ к истории слов для AutoConverter (нужен ретро-проверке предыдущего слова).
     var historySnapshot: [String] { recentWords }
 
-    /// Заменить слово в recentWords по offset с конца (0 = последнее, 1 = предпоследнее, …).
     func replaceFromEnd(offset: Int, with converted: String) {
         guard recentWords.count > offset, offset >= 0 else { return }
         recentWords[recentWords.count - 1 - offset] = converted
     }
 
-    /// Когда true, все входящие события игнорируются. Используется AutoConverter
-    /// чтобы не «съесть» свои же синтетические нажатия.
+    /// AutoConverter выставляет true чтобы не съедать собственные синтетические нажатия.
     var muted: Bool = false
 
-    /// Колбэк при завершении слова (нажат разделитель). Передаёт слово и символ-разделитель.
     var onWordCompleted: ((String, Character) -> Void)?
 
     private init() {}
@@ -171,8 +152,6 @@ final class KeystrokeBuffer {
                        object: nil, queue: .main) { [weak self] _ in
             self?.clearContext()
         }
-        // Клик мышкой = пользователь больше не печатает + меняет место/контекст ввода.
-        // Чистим всё включая recentWords (контекст языка).
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             self?.clearContext()
             Log.buffer.info("context cleared by mouse click")
@@ -181,7 +160,7 @@ final class KeystrokeBuffer {
 
     private func handle(event: CGEvent) {
         if muted { return }
-        // Защита: в полях паролей буфер не работает
+        // В полях паролей буфер не работает — чтобы не утечь пароль через recentWords/lastWord
         if IsSecureEventInputEnabled() {
             currentWord = ""
             return
@@ -190,7 +169,6 @@ final class KeystrokeBuffer {
         lastActivity = Date()
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
 
-        // Backspace — удаляем последний символ
         if keyCode == 51 {
             if !currentWord.isEmpty {
                 currentWord.removeLast()
@@ -198,16 +176,14 @@ final class KeystrokeBuffer {
             return
         }
 
-        // Стрелки / Forward Delete / Escape — пользователь редактирует или навигирует.
-        // Молча сбрасываем накопление, без триггера авто-замены.
-        let arrowKeys: Set<Int> = [123, 124, 125, 126]  // ←→↓↑
+        // Стрелки / Forward Delete / Escape — навигация/редактирование, не должны триггерить авто-замену
+        let arrowKeys: Set<Int> = [123, 124, 125, 126]
         if arrowKeys.contains(keyCode) || keyCode == 117 || keyCode == 53 {
             currentWord = ""
             return
         }
 
-        // Tab / Return — фиксируем как последнее слово (для ручного хоткея),
-        // но НЕ запускаем авто-замену.
+        // Tab / Return — фиксируем lastWord (для ручного хоткея), но без авто-замены
         if keyCode == 48 || keyCode == 36 {
             if !currentWord.isEmpty {
                 lastWord = currentWord
@@ -219,20 +195,15 @@ final class KeystrokeBuffer {
 
         let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
-            // Cmd+что-то / Ctrl+что-то — это шорткат (Cmd+A, Cmd+C, и т.п.).
-            // Полностью обнуляем буфер — пользователь уже не «пишет слово».
             clear()
             return
         }
 
-        // Используем UCKeyTranslate чтобы обойти dead-key state. NSEvent.characters
-        // на dead-key возвращает пусто, а нам нужен сам символ.
+        // UCKeyTranslate — потому что NSEvent.characters на dead-key возвращает пусто
         guard let ch = KeyTranslator.character(for: event) else { return }
 
-        // Считаем «буквенными»: настоящие буквы, плюс все EN-side символы которые
-        // на той же физической клавише дают русскую букву (`;`=ж, `[`=х, `]`=ъ, ' = э,
-        // `,`=б, `.`=ю, `\`=ё). Они часто попадают по ошибке промаха раскладкой.
-        // autoConvert разберётся: если итог не валидное слово — оставит как есть.
+        // EN-side пунктуация (`;[]'\`\,.`) на той же физической клавише даёт русскую букву —
+        // включаем в слово, чтобы автоконвертер мог распознать промах раскладки
         let layoutMappedChars: Set<Character> = [";", "[", "]", "`", "\\", "'", ",", "."]
         if ch.isLetter || ch == "-" || layoutMappedChars.contains(ch) {
             currentWord.append(ch)
@@ -247,7 +218,6 @@ final class KeystrokeBuffer {
             lastWord = completed
             lastTrigger = trigger
             currentWord = ""
-            // Запоминаем в ring buffer для контекста
             recentWords.append(completed)
             if recentWords.count > recentWordsCapacity {
                 recentWords.removeFirst()
@@ -270,8 +240,6 @@ final class KeystrokeBuffer {
         lastTrigger = nil
     }
 
-    /// Полная очистка, включая контекст. Для перехода между «сессиями ввода»
-    /// (клик мышкой, смена приложения).
     func clearContext() {
         clear()
         recentWords.removeAll()
@@ -279,13 +247,10 @@ final class KeystrokeBuffer {
 }
 
 
-// MARK: - ModifierHotkey
-
-/// Описание модификатор-only хоткея (только нажатие и отпускание модификатора, без других клавиш).
+/// Хоткей в виде «нажал модификатор и отпустил без других клавиш».
 struct ModifierHotkey: Codable, Equatable {
-    /// Виртуальный код модификатора. См. KeyCode.swift / kVK_*
-    /// 58 = leftOption, 61 = rightOption, 55 = leftCommand, 54 = rightCommand,
-    /// 56 = leftShift, 60 = rightShift, 59 = leftControl, 62 = rightControl
+    /// kVK_* виртуальный код модификатора:
+    /// 58/61 = Option L/R, 55/54 = Command L/R, 56/60 = Shift L/R, 59/62 = Control L/R
     var keyCode: Int
 
     var displayName: String {
@@ -306,25 +271,24 @@ struct ModifierHotkey: Codable, Equatable {
 }
 
 
-/// Детектор «нажал модификатор и отпустил без других клавиш».
 final class ModifierHotkeyMonitor {
 
     private struct Tracking {
         let keyCode: Int
         let pressTime: Date
-        var contaminated: Bool  // была нажата другая клавиша во время удержания
+        /// Была нажата другая клавиша во время удержания — отменяет срабатывание
+        var contaminated: Bool
     }
 
     private var tracking: Tracking?
     private var bindings: [Int: () -> Void] = [:]
-    private let timeout: TimeInterval = 0.5  // макс. время удержания для «короткого» нажатия
+    private let timeout: TimeInterval = 0.5
 
     func install() {
         EventMonitor.shared.onFlagsChanged { [weak self] event in
             self?.handleFlags(event: event)
         }
         EventMonitor.shared.onKeyDown { [weak self] _ in
-            // Любое нажатие настоящей клавиши «загрязняет» удержание модификатора
             self?.tracking?.contaminated = true
         }
     }
@@ -341,16 +305,13 @@ final class ModifierHotkeyMonitor {
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
-        // Биты в flags для каждого модификатора
         let isPressed = isModifierPressed(keyCode: keyCode, flags: flags)
 
         if isPressed {
-            // Нажали модификатор — стартуем трекинг (если ещё нет)
             if tracking?.keyCode != keyCode {
                 tracking = Tracking(keyCode: keyCode, pressTime: Date(), contaminated: false)
             }
         } else {
-            // Отпустили модификатор
             if let t = tracking, t.keyCode == keyCode {
                 let held = Date().timeIntervalSince(t.pressTime)
                 if !t.contaminated && held < timeout {
@@ -364,7 +325,6 @@ final class ModifierHotkeyMonitor {
     }
 
     private func isModifierPressed(keyCode: Int, flags: CGEventFlags) -> Bool {
-        // Проверяем что соответствующий бит сейчас установлен
         switch keyCode {
         case 58, 61: return flags.contains(.maskAlternate)
         case 55, 54: return flags.contains(.maskCommand)

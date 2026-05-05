@@ -1,26 +1,19 @@
 import AppKit
 import Carbon
 
-/// Авто-конверсия и тоггл-история замен.
-///
-/// Любая замена (авто или ручная) регистрируется через `record(...)`. Пока окно тоггла открыто
-/// (5 секунд после последнего изменения), нажатие хоткея вызывает `toggle()` —
-/// печатает противоположную версию и переключает обратно раскладку.
 final class AutoConverter {
     static let shared = AutoConverter()
 
     enum DisplayState {
-        case original   // в документе сейчас исходный текст
-        case converted  // в документе сейчас конвертированный текст
+        case original
+        case converted
     }
 
     private final class Replacement {
         let original: String
         let converted: String
-        /// Разделитель, идущий ЗА словом в документе (пробел, точка…).
-        /// nil = замена не имеет хвостового разделителя (например, выделение).
+        /// nil = замена без хвостового разделителя (например, выделение)
         let trigger: Character?
-        /// Раскладка, которая была активна до самой первой конверсии этого слова.
         let originalLayout: TISInputSource?
         var state: DisplayState
         var lastChangeTime: Date
@@ -38,8 +31,8 @@ final class AutoConverter {
 
     private var lastReplacement: Replacement?
     private let toggleWindow: TimeInterval = 5.0
-    /// Окно после своих синтетических действий, в котором собственные key events
-    /// не должны инвалидировать lastReplacement.
+    /// Окно после синтетических действий, чтобы собственные key events
+    /// не инвалидировали lastReplacement.
     private var ignoreInvalidationsUntil: Date = .distantPast
 
     private init() {}
@@ -56,8 +49,6 @@ final class AutoConverter {
         }
     }
 
-    // MARK: - Авто-замена при завершении слова пользователем
-
     private func handleWordCompleted(word: String, trigger: Character) {
         guard Settings.shared.enabled else {
             Log.auto.info("disabled, skip word='\(word, privacy: .public)'")
@@ -70,8 +61,6 @@ final class AutoConverter {
         let savedLayout = InputSourceSwitcher.current()
         let buffer = KeystrokeBuffer.shared
 
-        // Цепочка ретро-конверсий: сколько идущих подряд одиночных слов перед текущим
-        // тоже надо свапнуть. Возвращается от старого к новому.
         let retroChain = retroactiveChain(
             history: buffer.historySnapshot, currentConverted: converted
         )
@@ -86,11 +75,8 @@ final class AutoConverter {
             for r in retroChain {
                 Log.auto.info("retro: '\(r.orig, privacy: .public)' → '\(r.conv, privacy: .public)'")
             }
-            // Сколько символов удалить: для каждого retro слова + 1 пробел,
-            // потом основное слово + trigger.
             let prevDelete = retroChain.reduce(0) { $0 + $1.orig.count + 1 }
             let toDelete = prevDelete + word.count + 1
-            // Что напечатать: все retro_conv через пробел, потом converted + trigger
             let prefix = retroChain.map { $0.conv }.joined(separator: " ")
             let toType = prefix + " " + converted + String(trigger)
             sendBackspaces(toDelete)
@@ -98,10 +84,7 @@ final class AutoConverter {
             if let lang = converted.inputLanguageForLayout {
                 InputSourceSwitcher.switchTo(lang)
             }
-            // Обновляем историю
             for (offsetFromEndOfRetro, r) in retroChain.enumerated() {
-                // retroChain[0] — самое старое, стоит на позиции (count - 1 - retroChain.count + 0)
-                // т.е. offset с конца = retroChain.count - offsetFromEndOfRetro
                 let offsetFromEnd = retroChain.count - offsetFromEndOfRetro
                 buffer.replaceFromEnd(offset: offsetFromEnd, with: r.conv)
             }
@@ -113,9 +96,6 @@ final class AutoConverter {
         }
     }
 
-    /// Возвращает цепочку retro-конверсий: подряд идущие одиночные слова перед текущим,
-    /// которые после swap становятся буквами языка converted.
-    /// Возвращает в порядке от старого к новому.
     private func retroactiveChain(history: [String], currentConverted: String)
         -> [(orig: String, conv: String)] {
         let convertedLow = currentConverted.lowercased()
@@ -132,7 +112,6 @@ final class AutoConverter {
             let prev = history[i]
             guard prev.count == 1 else { break }
             let prevLow = prev.lowercased()
-            // Если уже валидно в целевом языке — не трогаем и стопаем
             if isCyrConv && validRu.contains(prevLow) { break }
             if isLatConv && validEn.contains(prevLow) { break }
 
@@ -142,7 +121,6 @@ final class AutoConverter {
                                 || ("А"..."Я").contains(firstSwap) || firstSwap == "Ё"
             let swapIsLatLetter = ("a"..."z").contains(firstSwap) || ("A"..."Z").contains(firstSwap)
 
-            // Свап должен дать букву ЦЕЛЕВОГО языка и быть отличен от оригинала
             let valid = (isCyrConv && swapIsCyrLetter) || (isLatConv && swapIsLatLetter)
             if valid && prevSwap != prev {
                 chain.append((prev, prevSwap))
@@ -151,13 +129,9 @@ final class AutoConverter {
                 break
             }
         }
-        return chain.reversed()  // от старого к новому
+        return chain.reversed()
     }
 
-    // MARK: - Регистрация ручной замены, выполненной снаружи (ClipboardConverter)
-
-    /// Зарегистрировать уже выполненную ручную замену.
-    /// Текст в документе сейчас = converted (ClipboardConverter уже сделал замену).
     func record(original: String, converted: String, trigger: Character?,
                 originalLayout: TISInputSource?) {
         let replacement = Replacement(
@@ -169,22 +143,16 @@ final class AutoConverter {
         ignoreInvalidationsUntil = Date().addingTimeInterval(0.3)
     }
 
-    // MARK: - Тоггл
-
-    /// Можно ли сейчас тоггнуть последнюю замену?
     func canToggle() -> Bool {
         guard let last = lastReplacement else { return false }
         return Date().timeIntervalSince(last.lastChangeTime) < toggleWindow
     }
 
-    /// Перевернуть состояние: показать противоположный вариант.
     func toggle() {
         guard let last = lastReplacement else { return }
         let target: DisplayState = (last.state == .converted) ? .original : .converted
         applyState(target)
     }
-
-    // MARK: - Применить заданное состояние к документу
 
     private func applyState(_ target: DisplayState) {
         guard let last = lastReplacement else { return }
@@ -197,7 +165,6 @@ final class AutoConverter {
         sendBackspaces(toDelete)
         typeUnicode(targetText + triggerStr)
 
-        // Переключаем раскладку
         if target == .original, let layout = last.originalLayout {
             InputSourceSwitcher.restore(layout)
         } else if let lang = targetText.inputLanguageForLayout {
@@ -208,8 +175,6 @@ final class AutoConverter {
         last.lastChangeTime = Date()
         ignoreInvalidationsUntil = Date().addingTimeInterval(0.3)
     }
-
-    // MARK: - Симуляция ввода (через единый InputInjection)
 
     private func sendBackspaces(_ count: Int) {
         InputInjection.shared.sendBackspaces(count)

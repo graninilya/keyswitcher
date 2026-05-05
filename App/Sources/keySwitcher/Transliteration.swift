@@ -1,6 +1,6 @@
 import Foundation
 
-/// Простая транслитерация ru ↔ en по таблице ГОСТ 7.79-2000 (упрощённая).
+/// Упрощённая таблица ГОСТ 7.79-2000.
 enum Transliteration {
 
     private static let ruToLatin: [Character: String] = [
@@ -14,7 +14,7 @@ enum Transliteration {
     ]
 
     static func apply(_ text: String) -> String {
-        // если текст в основном латиница — не трогаем (обратная транслит. неоднозначна)
+        // Только ru→lat: обратная транслитерация неоднозначна (sh→ш или с+х?)
         let cyrCount = text.unicodeScalars.filter { ("а"..."я").contains(Character($0)) || $0 == "ё" }.count
         guard cyrCount > 0 else { return text }
 

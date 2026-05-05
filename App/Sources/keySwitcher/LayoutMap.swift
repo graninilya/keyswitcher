@@ -1,7 +1,5 @@
 import Foundation
 
-/// Загруженная мапа физических клавиш ЙЦУКЕН ↔ QWERTY
-/// плюс словари для определения «эта строка набрана не на той раскладке».
 final class LayoutMap {
     static let shared = LayoutMap()
 
@@ -9,20 +7,12 @@ final class LayoutMap {
     private let ruToEn: [Character: Character]
     private var wordsRu: Set<String>
     private var wordsEn: Set<String>
-    /// Все «плохие» подстроки латиницы (значит набирали кириллицу)
     private let badLatin: Set<String>
-    /// Все «плохие» подстроки кириллицы (значит набирали латиницу)
     private let badCyrillic: Set<String>
-    /// Длины триггеров — для эффективного substring matching
     private let badLatinLengths: [Int]
     private let badCyrillicLengths: [Int]
 
     private init() {
-        // Сначала пробуем динамически прочитать актуальные раскладки пользователя
-        // через UCKeyTranslate. Это покрывает любые варианты RU layout (Russian, Russian-PC,
-        // Russian-Phonetic), а также любые EN layout (US, US-International, ABC и т.п.).
-        // Если по какой-то причине не получилось — fallback на захардкоженный JSON.
-        // Стандартная Apple-раскладка из JSON — fallback и оверрайд для битых маппингов
         let standardLayout: LayoutFile = LayoutMap.load("layout_map")
         let standardEnToRu = LayoutMap.charMap(standardLayout.en_to_ru)
         let standardRuToEn = LayoutMap.charMap(standardLayout.ru_to_en)
@@ -37,7 +27,6 @@ final class LayoutMap {
             self.ruToEn = standardRuToEn
         }
 
-        // Дамп ключевой пунктуации для дебага
         for k: Character in [".", ",", ";", "[", "]", "'", "`", "\\", "/"] {
             let mapped = self.enToRu[k].map(String.init) ?? "<no>"
             Log.detector.info("  EN '\(String(k), privacy: .public)' → RU '\(mapped, privacy: .public)'")
@@ -54,8 +43,7 @@ final class LayoutMap {
         self.badLatinLengths = Array(Set(triggers.latin.map { $0.count })).sorted()
         self.badCyrillicLengths = Array(Set(triggers.cyrillic.map { $0.count })).sorted()
 
-        // Дополнительный whitelist: разговорные слова, заимствования, частые сокращения,
-        // которых нет в hunspell base forms.
+        // Разговорные слова и заимствования, которых нет в hunspell base forms
         let extraRu: Set<String> = [
             "ок", "окей", "норм", "лол", "оке", "пофиг", "плс",
             "спс", "пжл", "хм", "угу", "ага", "ню", "блин",
@@ -69,15 +57,8 @@ final class LayoutMap {
         self.wordsEn.formUnion(extraEn)
     }
 
-    // MARK: Public
-
-    /// Преобразовать строку как если бы набрали на другой раскладке.
-    ///
-    /// - Чистая кириллица «привет» → «ghbdtn»
-    /// - Чистая латиница «ghbdtn» → «привет»
-    /// - Смешанная «тfr» (с любой кириллицей) → «так» (нормализация к кириллице)
-    /// - «;му» (`;` на EN = `ж` на RU) → «жму»
-    /// - «;ve» (всё промахнулось) → «жму»
+    /// Преобразует строку как если бы её набрали на другой раскладке.
+    /// При смешанной строке кириллица побеждает (нормализуем к ней).
     func swap(_ s: String) -> String {
         let cyrLetters = s.filter(isCyrillicLetter).count
         let latLetters = s.filter(isLatinLetter).count
@@ -87,18 +68,14 @@ final class LayoutMap {
             return isCyrillicLetter(mapped)
         }
 
-        // Если есть кириллические буквы И что-то «латинское» (буквы или EN-пунктуация-к-RU-букве)
-        // → нормализуем к кириллице. Кириллица «выигрывает» при любом количестве.
         if cyrLetters > 0 && (latLetters > 0 || hasEnLayoutPunct) {
             return String(s.map { enToRu[$0] ?? $0 })
         }
 
-        // Только кириллические буквы → полный свап в латиницу
         if cyrLetters > 0 {
             return String(s.map { ruToEn[$0] ?? $0 })
         }
 
-        // Только латинские буквы или EN-пунктуация-к-RU-букве → свап в кириллицу
         return String(s.map { enToRu[$0] ?? ruToEn[$0] ?? $0 })
     }
 
@@ -110,14 +87,11 @@ final class LayoutMap {
         return ("а"..."я").contains(c) || c == "ё" || ("А"..."Я").contains(c) || c == "Ё"
     }
 
-    /// Решает, стоит ли переключить раскладку этой строки.
-    /// Возвращает результат и направление, если уверенность достаточная.
     func detectAndConvert(_ text: String) -> ConversionResult {
         let candidate = swap(text)
         let originalScore = score(text)
         let candidateScore = score(candidate)
 
-        // Конвертим только если новый вариант явно лучше.
         if candidateScore > originalScore + 0.15 {
             return .converted(candidate)
         }
@@ -129,25 +103,14 @@ final class LayoutMap {
         case unchanged
     }
 
-    /// Детектор для авто-режима. Возвращает swap если уверен, что слово набрано не в той раскладке.
-    ///
-    /// Логика (в порядке приоритета):
-    ///   1. Слово смешанное по алфавитам или слишком короткое → не трогаем
-    ///   2. Слово целиком — валидное в текущем языке → не трогаем
-    ///   3. Слово целиком есть в плохих триггерах текущего языка → SWAP
-    ///   4. Свап — валидное слово в другом языке → SWAP
-    ///   5. В слове есть подстрока из плохих триггеров (длина 3+) → SWAP
-    ///   6. Иначе → не трогаем
     func autoConvert(_ word: String) -> String? {
         let lower = word.lowercased()
 
-        // Одиночная буква-предлог: конвертим только если контекст совпадает с свапом.
-        // Например, если ты пишешь в основном на русском (ctx=.russian) и ввёл `f`,
-        // он свапается в `а`. Без контекста — не трогаем (могут быть и `a`, `i` английские).
+        // Одиночная буква-предлог: конвертим только при совпадении свапа с контекстом —
+        // иначе одиночные `a` / `i` всегда бы конвертились в русские `ф` / `ш`
         if lower.count == 1 {
             let singleRu: Set<String> = ["а","и","в","к","с","о","у","я"]
             let singleEn: Set<String> = ["a","i"]
-            // Уже валидный предлог в каком-то языке → не трогаем
             if singleRu.contains(lower) || singleEn.contains(lower) { return nil }
             let swapped = swap(word)
             let swappedLow = swapped.lowercased()
@@ -167,7 +130,6 @@ final class LayoutMap {
         let isCyrillic = lower.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" }
 
         if !isLatin && !isCyrillic {
-            // Извлекаем чисто буквенные части по алфавитам
             let lettersLat = String(lower.filter { ("a"..."z").contains($0) })
             let lettersCyr = String(lower.filter { ("а"..."я").contains($0) || $0 == "ё" })
             let hasLat = !lettersLat.isEmpty
@@ -177,11 +139,8 @@ final class LayoutMap {
                            || (hasEnLayoutPunct && (hasLat || hasCyr))
             guard isCandidate else { return nil }
 
-            // Если layout-пунктуация только в КОНЦЕ слова (типа `Hello,`) — это, скорее
-            // всего, настоящая пунктуация. И если буквенная часть валидна в исходном
-            // языке — оставляем как есть.
-            // Если же layout-пунктуация в НАЧАЛЕ (`.,rf`, `'kkf`) — это явный layout-промах,
-            // продолжаем к нормализации даже если буквенная часть в словаре.
+            // Layout-пунктуация в конце (`Hello,`) = настоящая пунктуация → не трогаем валидное слово.
+            // В начале (`.,rf`, `'kkf`) = промах раскладкой → нормализуем даже если буквы в словаре.
             let layoutPunct: Set<Character> = [";", "[", "]", "'", "`", "\\", ",", "."]
             let firstIsLayoutPunct = lower.first.map { layoutPunct.contains($0) } ?? false
             if !firstIsLayoutPunct {
@@ -194,14 +153,12 @@ final class LayoutMap {
             let normLow = normalized.lowercased()
             let normIsLat = normLow.allSatisfy { ("a"..."z").contains($0) }
             let normIsCyr = normLow.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" }
-            // Конвертим если нормализация дала чистый алфавит
             if normIsLat || normIsCyr {
                 return normalized
             }
             return nil
         }
 
-        // (2) Валидное слово в текущем языке — никогда не трогаем
         if isLatin && wordsEn.contains(lower) { return nil }
         if isCyrillic && wordsRu.contains(lower) { return nil }
 
@@ -210,14 +167,11 @@ final class LayoutMap {
 
         let triggers = isLatin ? badLatin : badCyrillic
 
-        // (3) Точное совпадение со списком плохих триггеров
         if triggers.contains(lower) { return candidate }
 
-        // (4) Свап — валидное слово
         if isLatin && wordsRu.contains(candidateLower) { return candidate }
         if isCyrillic && wordsEn.contains(candidateLower) { return candidate }
 
-        // (5) Взвешенный скор по плохим подстрокам.
         let oppositeTriggers = isLatin ? badCyrillic : badLatin
         let wordScore = weightedBadScore(in: lower, triggers: triggers)
         let swapScore = weightedBadScore(in: candidateLower, triggers: oppositeTriggers)
@@ -225,10 +179,7 @@ final class LayoutMap {
             return candidate
         }
 
-        // (6) Контекст-aware: если слово неоднозначное (есть мусор в подстроках),
-        //     но контекст явно противоречит языку слова — конвертим.
-        //     Пример: ты пишешь в RU и ввёл `rf` — без контекста бы не тронули
-        //     (т.к. `rf` есть в EN dict), но в RU контексте это явно «к-а» промах.
+        // Контекст-aware fallback: `rf` есть в EN dict, но в RU контексте это `к-а` промах
         let context = KeystrokeBuffer.shared.dominantContext
         if wordScore >= 1 {
             if isLatin && context == .russian { return candidate }
@@ -238,13 +189,12 @@ final class LayoutMap {
         return nil
     }
 
-    /// Считает «уверенность что слово в неправильной раскладке»: сумма взвешенных
-    /// плохих подстрок. Длинные подстроки весят больше — они более дискриминативны.
+    /// Длинные подстроки весят больше — они более дискриминативны (3→1, 4→2, 5→3, 6→4).
     private func weightedBadScore(in word: String, triggers: Set<String>) -> Int {
         let chars = Array(word)
         var score = 0
         for L in 3...6 where L <= chars.count {
-            let weight = L - 2  // 3→1, 4→2, 5→3, 6→4
+            let weight = L - 2
             let limit = chars.count - L
             for start in 0...limit {
                 let sub = String(chars[start..<(start + L)])
@@ -256,10 +206,6 @@ final class LayoutMap {
         return score
     }
 
-    // MARK: Scoring
-
-    /// Доля «валидных» слов в строке (слова присутствуют в словаре RU или EN).
-    /// Простая, но для MVP достаточно мощная эвристика.
     private func score(_ text: String) -> Double {
         let tokens = text
             .lowercased()
@@ -278,8 +224,6 @@ final class LayoutMap {
         return Double(hits) / Double(tokens.count)
     }
 
-    // MARK: Loading
-
     private struct LayoutFile: Decodable {
         let en_to_ru: [String: String]
         let ru_to_en: [String: String]
@@ -290,9 +234,8 @@ final class LayoutMap {
         let cyrillic: [String]
     }
 
-    /// Сливает две мапы: предпочитает primary, но если primary мапит пунктуацию на пунктуацию
-    /// (а не на букву) — берёт fallback (где есть буква). Это спасает от кастомных
-    /// Ukelele-раскладок где `.` → `,` вместо `.` → `ю`.
+    /// Если primary мапит пунктуацию на пунктуацию вместо буквы — берём fallback.
+    /// Спасает от кастомных Ukelele-раскладок где `.` → `,` вместо `.` → `ю`.
     private static func mergeMap(primary: [Character: Character],
                                   fallback: [Character: Character]) -> [Character: Character] {
         func isLetter(_ c: Character) -> Bool { c.isLetter }
@@ -302,7 +245,6 @@ final class LayoutMap {
                 if isLetter(v) || !isLetter(f) {
                     out[k] = v
                 }
-                // else: primary даёт не-букву, а fallback букву — сохраняем fallback
             } else {
                 out[k] = v
             }

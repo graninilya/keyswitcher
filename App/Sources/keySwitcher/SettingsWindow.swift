@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Окно настроек. Показываем отдельным NSWindow, но контент — SwiftUI.
 final class SettingsWindowController {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
@@ -29,14 +28,11 @@ final class SettingsWindowController {
 }
 
 
-// MARK: - SwiftUI views
-
 struct SettingsView: View {
     @ObservedObject private var settings = Settings.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
             HStack {
                 Toggle("", isOn: $settings.enabled)
                     .toggleStyle(.switch)
@@ -187,7 +183,6 @@ struct HotkeyRecorderButton: NSViewRepresentable {
 }
 
 
-/// NSView, которая ловит клавиши когда «в режиме записи».
 final class HotkeyRecorderNSView: NSView {
     var binding: HotkeyBinding = .disabled
     var allowsModifierOnly: Bool = false
@@ -268,7 +263,7 @@ final class HotkeyRecorderNSView: NSView {
 
     override func keyDown(with event: NSEvent) {
         guard recording else { super.keyDown(with: event); return }
-        if event.keyCode == 53 {  // Esc — отмена
+        if event.keyCode == 53 {  // Esc — отмена записи
             stopRecording(commit: false)
             return
         }
@@ -293,7 +288,6 @@ final class HotkeyRecorderNSView: NSView {
             trackedModifier = keyCode
             modifierContaminated = false
         } else {
-            // Отпустили — если это тот же модификатор и быстро — записываем
             if let t = modifierPressTime, let k = trackedModifier, k == keyCode,
                Date().timeIntervalSince(t) < 0.5, !modifierContaminated {
                 let m = ModifierHotkey(keyCode: keyCode)

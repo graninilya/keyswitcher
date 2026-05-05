@@ -1,16 +1,13 @@
 import Carbon
 import Foundation
 
-/// Языки, между которыми работаем.
 enum InputLanguage: String {
     case russian = "ru"
     case english = "en"
 }
 
-/// Утилиты для определения раскладки и переключения системного input source.
 enum InputSourceSwitcher {
 
-    /// Текущий activated input source (для запоминания и восстановления).
     static func current() -> TISInputSource? {
         TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
     }
@@ -30,7 +27,7 @@ enum InputSourceSwitcher {
     }
 
     private static func findSource(forLanguage code: String) -> TISInputSource? {
-        // includeAllInstalled = false → только включённые пользователем
+        // includeAllInstalled=false — только раскладки, которые юзер сам активировал
         guard let cfList = TISCreateInputSourceList(nil, false)?.takeRetainedValue(),
               let sources = cfList as? [TISInputSource] else {
             return nil
@@ -63,8 +60,7 @@ enum InputSourceSwitcher {
 
 
 extension String {
-    /// На какую раскладку логично переключиться, чтобы продолжить набор этого текста.
-    /// Возвращает nil если текст без букв или смешанный.
+    /// nil если текст без букв или смешанный.
     var inputLanguageForLayout: InputLanguage? {
         var cyr = 0
         var lat = 0

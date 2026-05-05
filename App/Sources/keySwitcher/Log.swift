@@ -1,7 +1,6 @@
 import Foundation
 import os.log
 
-/// Унифицированный логгер. В Console.app или через
 /// `log show --predicate 'subsystem == "com.granin.keyswitcher"' --info --last 5m`
 enum Log {
     private static let subsystem = "com.granin.keyswitcher"

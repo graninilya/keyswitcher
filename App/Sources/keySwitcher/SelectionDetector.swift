@@ -1,28 +1,24 @@
 import AppKit
 import ApplicationServices
 
-/// Определение наличия выделения через Accessibility API.
-/// Без симуляции Cmd+C — это спасает от приложений, где Cmd+C без выделения
-/// копирует всю текущую строку (Word, Pages, Notes и многие другие).
-/// Информация о выделении.
+/// AX вместо симуляции Cmd+C: иначе в Word/Pages/Notes Cmd+C без выделения
+/// копирует всю текущую строку — и мы получаем ложное «выделение».
 struct SelectionInfo {
     let text: String
     let length: Int
-    /// Общее число символов в фокусном элементе. nil если приложение не отдаёт.
+    /// nil если приложение не отдаёт.
     let totalCharacters: Int?
 
-    /// Это «настоящее частичное» выделение (часть содержимого), а не вся строка/документ.
-    /// Когда AX в проблемных приложениях врёт что выделена вся строка — totalCharacters == length,
-    /// и мы не считаем это надёжным сигналом.
+    /// Когда AX в Electron/etc врёт что выделена вся строка — totalCharacters == length,
+    /// это ненадёжный сигнал и мы не считаем его partial.
     var isPartial: Bool {
-        guard let total = totalCharacters else { return true }  // total неизвестен — доверяем
+        guard let total = totalCharacters else { return true }
         return length < total
     }
 }
 
 enum SelectionDetector {
 
-    /// Полная информация о текущем выделении.
     static func currentSelectionInfo() -> SelectionInfo? {
         let system = AXUIElementCreateSystemWide()
 
@@ -34,7 +30,6 @@ enum SelectionDetector {
         }
         let element = focusedRef as! AXUIElement
 
-        // Длина выделения через range
         var rangeRef: CFTypeRef?
         let rRange = AXUIElementCopyAttributeValue(
             element, kAXSelectedTextRangeAttribute as CFString, &rangeRef
@@ -48,7 +43,6 @@ enum SelectionDetector {
         guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
         guard range.length > 0 else { return nil }
 
-        // Сам текст
         var selRef: CFTypeRef?
         let rSel = AXUIElementCopyAttributeValue(
             element, kAXSelectedTextAttribute as CFString, &selRef
@@ -57,7 +51,6 @@ enum SelectionDetector {
             return nil
         }
 
-        // Общее число символов (если приложение отдаёт)
         var totalRef: CFTypeRef?
         var total: Int? = nil
         if AXUIElementCopyAttributeValue(
@@ -70,7 +63,6 @@ enum SelectionDetector {
         return SelectionInfo(text: text, length: range.length, totalCharacters: total)
     }
 
-    /// Совместимость: возвращает только текст, если есть выделение (любое — partial или нет).
     static func currentSelectedText() -> String? {
         return currentSelectionInfo()?.text
     }

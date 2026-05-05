@@ -1,8 +1,5 @@
 import AppKit
 
-/// Единая точка для всей симуляции ввода (backspace, Cmd+C/V, набор Unicode).
-/// Главная задача — мьютить KeystrokeBuffer чтобы наши же синтетические события
-/// не попадали обратно в буфер и не «загрязняли» currentWord.
 final class InputInjection {
     static let shared = InputInjection()
 
@@ -26,8 +23,7 @@ final class InputInjection {
         muteAndPost { src in
             let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
             let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
-            // Принудительно очищаем флаги — иначе наследуются модификаторы пользователя
-            // (например, удерживаемый Option превратит Backspace в Option+Backspace = удалить слово)
+            // Очищаем флаги: удерживаемый юзером Option превратил бы Backspace в «удалить слово»
             down?.flags = []
             up?.flags = []
             down?.post(tap: .cghidEventTap)
@@ -65,16 +61,14 @@ final class InputInjection {
         }
     }
 
-    /// Мьютит буфер на время инжекции и 200 мс после (чтобы события успели прийти
-    /// обратно через event tap). Поддерживает вложенные вызовы через ref count.
-    /// Использует privateState — не наследует модификаторы пользователя.
+    /// Поддерживает вложенные вызовы через ref count; держит mute ещё 200 мс,
+    /// чтобы синтетические события успели прилететь обратно через event tap.
     private func muteAndPost(_ work: (CGEventSource?) -> Void) {
         let buf = KeystrokeBuffer.shared
         muteRefCount += 1
         buf.muted = true
 
-        // privateState вместо combinedSessionState — не тащит за собой удерживаемые
-        // пользователем модификаторы (Option, Cmd, Shift и т.п.)
+        // privateState вместо combinedSessionState — не наследует удерживаемые юзером модификаторы
         let src = CGEventSource(stateID: .privateState)
         work(src)
 

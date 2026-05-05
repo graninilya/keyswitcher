@@ -1,7 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Регистрация глобальных хоткеев через Carbon (работает без AX-разрешений).
+/// Carbon-хоткеи работают без AX-разрешений (в отличие от CGEventTap).
 final class HotkeyManager {
     private var nextID: UInt32 = 1
     private var handlers: [UInt32: () -> Void] = [:]
@@ -92,7 +92,6 @@ final class HotkeyManager {
     }
 }
 
-/// Виртуальные коды клавиш (Carbon kVK_*).
 enum KeyCode: Int {
     case a = 0
     case s = 1

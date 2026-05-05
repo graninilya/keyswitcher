@@ -1,22 +1,17 @@
 import Carbon
 import Foundation
 
-/// Динамическое чтение текущей раскладки клавиатуры через UCKeyTranslate.
-/// Работает с любой пользовательской раскладкой (Russian, Russian-PC, Russian-Phonetic,
-/// ABC, US, US-International и т.п.) — не зависит от хардкода.
 enum LayoutResolver {
 
     typealias Map = [Character: Character]
 
-    /// Построить мапы en↔ru на основе реальных установленных раскладок пользователя.
-    /// Если найти пару EN+RU не удалось — возвращает nil (вызывающий должен использовать fallback).
+    /// nil если не удалось найти пару EN+RU — вызывающий должен использовать fallback.
     static func resolve() -> (enToRu: Map, ruToEn: Map)? {
         guard let sources = TISCreateInputSourceList(nil, false)?
                 .takeRetainedValue() as? [TISInputSource] else {
             return nil
         }
 
-        // Соберём ВСЕ EN и RU источники, потом выберем «лучшие»
         var enSources: [TISInputSource] = []
         var ruSources: [TISInputSource] = []
         for source in sources {
@@ -31,8 +26,7 @@ enum LayoutResolver {
             }
         }
 
-        // Предпочитаем «канонические» Apple-раскладки: Russian (без -PC и без -Phonetic)
-        // и ABC/US (без -International).
+        // Предпочитаем канонические Apple-раскладки (без -PC, -Phonetic, -International)
         let enSource = pickPreferred(enSources, preferring: ["com.apple.keylayout.US",
                                                               "com.apple.keylayout.ABC"])
         let ruSource = pickPreferred(ruSources, preferring: ["com.apple.keylayout.Russian"])
@@ -46,10 +40,9 @@ enum LayoutResolver {
         var ruToEn: Map = [:]
         let kbdType = UInt32(LMGetKbdType())
 
-        // Проходим все физические клавиши, без модификаторов и с Shift
         for kc in 0..<128 {
             for shift in [false, true] {
-                let mods: UInt32 = shift ? 2 : 0  // Shift = 0x0200 >> 8 = 2
+                let mods: UInt32 = shift ? 2 : 0  // Shift = 0x0200 >> 8
                 guard let enChar = translateChar(enData, keycode: UInt16(kc),
                                                   modifiers: mods, kbdType: kbdType) else { continue }
                 guard let ruChar = translateChar(ruData, keycode: UInt16(kc),
@@ -63,8 +56,6 @@ enum LayoutResolver {
 
         return (enToRu, ruToEn)
     }
-
-    // MARK: - Helpers
 
     private static func isKeyboardSource(_ source: TISInputSource) -> Bool {
         guard let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceCategory) else {

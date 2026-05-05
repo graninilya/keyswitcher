@@ -1,17 +1,7 @@
 import AppKit
 
-/// Ручная конверсия:
-///   - выделенного текста (через Cmd+C → подмена → Cmd+V), либо
-///   - последнего набранного слова (через буфер + backspace + ввод).
-/// После любой удачной замены регистрирует её в AutoConverter, чтобы хоткей мог тоггнуть туда-обратно.
 final class ClipboardConverter {
 
-    /// Умная конверсия. Логика как в Caramba:
-    ///   1. Если буфер не пуст — ты только что печатал → конвертим последнее слово.
-    ///   2. Иначе пробуем AX-выделение.
-    ///   3. Иначе — ничего.
-    /// Буфер очищается на: клик мышкой, переключение приложения, спецклавиши.
-    /// Так что «не пуст» = «пользователь активно набирает прямо сейчас».
     func smartConvert(_ transform: @escaping (String) -> String?) {
         let buffer = KeystrokeBuffer.shared
         let hasBuffer = !buffer.currentWord.isEmpty || !buffer.lastWord.isEmpty
@@ -19,7 +9,6 @@ final class ClipboardConverter {
         let typingNow = Date().timeIntervalSince(buffer.lastActivity) < 2.0
         Log.clipboard.info("smartConvert: hasBuffer=\(hasBuffer) typingNow=\(typingNow) cur='\(buffer.currentWord, privacy: .public)' last='\(buffer.lastWord, privacy: .public)' selection=\(String(describing: selection?.text), privacy: .public) partial=\(selection?.isPartial ?? false)")
 
-        // (1) Настоящее частичное выделение — приоритет всегда.
         if let sel = selection, sel.isPartial {
             Log.clipboard.info("→ SELECTION path (partial)")
             let pb = NSPasteboard.general
@@ -29,9 +18,8 @@ final class ClipboardConverter {
             return
         }
 
-        // (2) Selection-есть-но-он-«вся-строка»:
-        //     - если ты ТОЛЬКО ЧТО печатал → доверяем буферу (Electron часто врёт что вся строка selected)
-        //     - иначе доверяем selection (это реальный Cmd+A)
+        // Electron часто рапортует что выделена «вся строка» когда юзер просто печатает —
+        // в этом случае доверяем буферу, а не AX selection.
         if let sel = selection, !sel.isPartial {
             if typingNow && hasBuffer {
                 Log.clipboard.info("→ BUFFER path (typing, ignoring whole-text selection as suspicious)")
@@ -46,7 +34,6 @@ final class ClipboardConverter {
             return
         }
 
-        // (3) Нет selection вообще — пробуем буфер
         if hasBuffer {
             Log.clipboard.info("→ BUFFER path")
             convertLastWord(transform: transform)
@@ -56,7 +43,6 @@ final class ClipboardConverter {
         Log.clipboard.info("→ nothing")
     }
 
-    /// Конвертация уже известного выделенного текста через буфер обмена.
     private func convertSelectedText(original: String, transform: @escaping (String) -> String?) {
         let pasteboard = NSPasteboard.general
         let savedItems = backupPasteboard(pasteboard)
@@ -64,8 +50,6 @@ final class ClipboardConverter {
                          pasteboard: pasteboard, savedItems: savedItems)
     }
 
-    /// Принудительная конверсия. Сначала пробует выделение, иначе — последнее слово.
-    /// В отличие от smartConvert, не использует детектор — просто всегда применяет transform.
     func convertSelectionOnly(_ transform: @escaping (String) -> String?) {
         if let original = SelectionDetector.currentSelectedText() {
             let pasteboard = NSPasteboard.general
@@ -76,8 +60,6 @@ final class ClipboardConverter {
             convertLastWord(transform: transform)
         }
     }
-
-    // MARK: - Selection helper
 
     private func replaceSelection(original: String, transform: (String) -> String?,
                                   pasteboard: NSPasteboard,
@@ -94,7 +76,6 @@ final class ClipboardConverter {
             if let lang = new.inputLanguageForLayout {
                 InputSourceSwitcher.switchTo(lang)
             }
-            // Регистрируем для тоггла. Trigger = nil (выделение, не было хвостового разделителя).
             AutoConverter.shared.record(
                 original: original, converted: new, trigger: nil, originalLayout: savedLayout
             )
@@ -103,8 +84,6 @@ final class ClipboardConverter {
             }
         }
     }
-
-    // MARK: - Last word
 
     private func convertLastWord(transform: (String) -> String?) {
         let buffer = KeystrokeBuffer.shared
@@ -141,15 +120,12 @@ final class ClipboardConverter {
             InputSourceSwitcher.switchTo(lang)
         }
 
-        // Регистрируем для тоггла
         AutoConverter.shared.record(
             original: word, converted: converted, trigger: trigger, originalLayout: savedLayout
         )
 
         buffer.clear()
     }
-
-    // MARK: - Симуляция ввода
 
     private func sendCommand(keyCode: CGKeyCode) {
         InputInjection.shared.sendCommand(keyCode: keyCode)
@@ -162,8 +138,6 @@ final class ClipboardConverter {
     private func typeUnicode(_ text: String) {
         InputInjection.shared.typeUnicode(text)
     }
-
-    // MARK: - Pasteboard backup/restore
 
     private func backupPasteboard(_ pb: NSPasteboard) -> [(NSPasteboard.PasteboardType, Data)] {
         var saved: [(NSPasteboard.PasteboardType, Data)] = []

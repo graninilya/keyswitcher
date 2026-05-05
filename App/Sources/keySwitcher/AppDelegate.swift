@@ -18,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         ensureAccessibility()
 
-        // Запускаем CGEventTap (нужен для KeystrokeBuffer и modifier-only хоткеев)
         let started = EventMonitor.shared.start()
         if started {
             KeystrokeBuffer.shared.install()
@@ -30,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         rebindHotkeys()
 
-        // Перебиндить при изменении настроек
         settings.$hotkeys
             .dropFirst()
             .sink { [weak self] _ in self?.rebindHotkeys() }
@@ -40,12 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
-    // MARK: - Menu bar
-
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            // title как страховка — даже если символа нет, иконка не пропадёт
+            // Страховка на случай отсутствия иконки в бандле
             button.title = "Q*Й"
             button.imagePosition = .imageOnly
         }
@@ -74,12 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let isOn = enabled ?? settings.enabled
 
-        // Обновим чекмарк рядом с пунктом «Включено» в меню
         if let menu = statusItem.menu, let toggleItem = menu.items.first {
             toggleItem.state = isOn ? .on : .off
         }
 
-        // Берём цветной лого из бандла. Не template — наш бренд цветной.
         let image: NSImage?
         if let url = Bundle.main.url(forResource: "StatusIcon", withExtension: "pdf") {
             image = NSImage(contentsOf: url)
@@ -90,26 +84,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let image = image {
-            // Подгоняем по высоте menu bar (~22pt), ширина — по пропорциям
             let targetH: CGFloat = 22
             let aspect = image.size.width / image.size.height
             image.size = NSSize(width: round(targetH * aspect), height: targetH)
-            // Template image — macOS сама инвертирует под текущую тему
-            // (светлая = чёрный, тёмная = белый). Выкл состояние — приглушим тинтом.
+            // Template image — macOS сама инвертирует под текущую тему меню-бара
             image.isTemplate = true
             button.image = image
             button.imagePosition = .imageOnly
             button.title = ""
             button.contentTintColor = isOn ? nil : .tertiaryLabelColor
         } else {
-            // Fallback — текст
             button.image = nil
             button.title = isOn ? "Q*Й" : "Q*Й off"
             button.contentTintColor = isOn ? nil : .tertiaryLabelColor
         }
     }
-
-    // MARK: - Hotkey binding
 
     private func rebindHotkeys() {
         hotkeys.unregisterAll()
@@ -138,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Хоткей вкл/выкл — работает всегда, даже когда keySwitcher выключен.
+    /// Работает даже когда keySwitcher выключен — иначе нельзя было бы включить обратно.
     private func bindToggleEnabled(_ binding: HotkeyBinding) {
         switch binding {
         case .modifier(let m):
@@ -152,8 +141,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Actions
-
     @objc private func toggleEnabled() {
         settings.enabled.toggle()
     }
@@ -164,24 +151,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func smartConvert() {
         logHotkey("smartConvert")
-        // 1. Если в окне тоггла — переворачиваем состояние.
         if AutoConverter.shared.canToggle() {
             AutoConverter.shared.toggle()
             return
         }
-        // 2. Иначе — конвертим:
-        //    - Многословное выделение → каждое слово через строгий детектор.
-        //    - Одно слово (или буфер) → строгий детектор + fallback на свап для mixed.
         converter.smartConvert { text in
-            // Многословный текст (есть пробелы) — обрабатываем по-словно
             if text.contains(" ") || text.contains("\n") {
                 return Self.convertMultiWord(text)
             }
-            // Одно слово
             if let result = LayoutMap.shared.autoConvert(text) {
                 return result
             }
-            // Fallback: для слов с layout-mapped пунктуацией нормализуем
             let cyrLet = text.filter { ("а"..."я").contains($0) || $0 == "ё"
                                      || ("А"..."Я").contains($0) || $0 == "Ё" }.count
             let latLet = text.filter { ("a"..."z").contains($0) || ("A"..."Z").contains($0) }.count
@@ -194,9 +174,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Конвертация многословного выделения: каждое слово свапается отдельно
-    /// (кириллица → латинская, латинская → кириллица). Хвостовая пунктуация сохраняется.
-    /// Это force-режим: пользователь явно нажал хоткей на выделении.
     private static func convertMultiWord(_ text: String) -> String? {
         let trailingPunctChars: Set<Character> = [",", ".", "!", "?", ";", ":", ")", "]", "}", "—", "-"]
         var result = ""
@@ -204,7 +181,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var anyChanged = false
 
         func swapWord(_ word: String) -> String {
-            // Отделим хвостовую пунктуацию — её не трогаем
             var trailCount = 0
             for ch in word.reversed() {
                 if trailingPunctChars.contains(ch) { trailCount += 1 } else { break }
@@ -273,8 +249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openAccessibilityPane()
         }
     }
-
-    // MARK: - Accessibility
 
     private func ensureAccessibility() {
         if !AXIsProcessTrusted() {

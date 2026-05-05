@@ -1,12 +1,10 @@
 import Carbon
 import AppKit
 
-/// Перевод физической клавиши в Unicode символ через UCKeyTranslate.
 /// В отличие от NSEvent.charactersIgnoringModifiers — игнорирует dead key state,
 /// поэтому возвращает `'` даже если это dead key для accented букв.
 enum KeyTranslator {
 
-    /// Получить символ для текущего keyboard event и текущей раскладки.
     static func character(for event: CGEvent) -> Character? {
         let keycode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 
