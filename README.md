@@ -46,6 +46,27 @@
 
 ---
 
+## Исключения — обучается под тебя
+
+Иногда детектор ошибается и заменяет нужное слово (редкий сленг, фамилию, термин). Q*Й запоминает такие случаи и больше их не трогает.
+
+![Вкладка Исключения](docs/exceptions.png)
+
+**Как это работает:**
+
+1. Печатаешь слово, Q*Й заменил его автоматически
+2. Жмёшь **Option** в течение 5 секунд → откатил замену
+3. Откатил **3 раза подряд** (для разных вхождений того же слова) → слово навсегда добавляется в исключения
+4. В **Настройках → Исключения** видно весь список — можно вручную добавлять и удалять
+
+**Зачем 3 раза, а не 1?** Чтобы случайный откат не записал в исключения слово которое ты на самом деле хотел заменить. После третьего раза Q*Й уверен что это не ошибка.
+
+**Что внутри**:
+- ✓ зелёные — финальные исключения, больше не свапаются
+- ⏱ оранжевые — слова которые ты откатывал, но ещё не дошёл до 3-го раза. Счётчик `1 / 3`, `2 / 3` показывает сколько осталось.
+
+---
+
 ## Системные требования
 
 - macOS 13.0 (Ventura) или новее
@@ -104,6 +125,19 @@ All later updates arrive transparently via **"Check for updates…"** in the men
 | **⌥⇧T** | Transliterate selection: Cyrillic → Latin. |
 
 Rebind anything in **Settings → Hotkeys**.
+
+### Exceptions — adapts to you
+
+The detector is wrong sometimes (rare slang, surnames, technical terms). Q*Й remembers these and stops touching them.
+
+**How it works:**
+
+1. Type a word, Q*Й auto-converts it.
+2. Press **Option** within 5 seconds to revert.
+3. Revert **three times** for the same word and it's permanently added to exceptions.
+4. **Settings → Exceptions** shows the full list — add or remove manually.
+
+**Why three reverts, not one?** A single accidental revert shouldn't blacklist a word you actually wanted converted. After three the app is sure it's not a fluke.
 
 ### Requirements
 

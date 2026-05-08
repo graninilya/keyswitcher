@@ -17,15 +17,18 @@ final class AutoConverter {
         let originalLayout: TISInputSource?
         var state: DisplayState
         var lastChangeTime: Date
+        let isAutomatic: Bool
 
         init(original: String, converted: String, tail: String,
-             originalLayout: TISInputSource?, state: DisplayState) {
+             originalLayout: TISInputSource?, state: DisplayState,
+             isAutomatic: Bool = false) {
             self.original = original
             self.converted = converted
             self.tail = tail
             self.originalLayout = originalLayout
             self.state = state
             self.lastChangeTime = Date()
+            self.isAutomatic = isAutomatic
         }
     }
 
@@ -78,7 +81,8 @@ final class AutoConverter {
 
         let replacement = Replacement(
             original: word, converted: converted, tail: String(trigger),
-            originalLayout: savedLayout, state: .original
+            originalLayout: savedLayout, state: .original,
+            isAutomatic: true
         )
         lastReplacement = replacement
 
@@ -160,6 +164,11 @@ final class AutoConverter {
     func toggle() {
         guard let last = lastReplacement else { return }
         let target: DisplayState = (last.state == .converted) ? .original : .converted
+        if target == .original, last.isAutomatic {
+            let promoted = Settings.shared.recordRevert(last.original)
+            let count = Settings.shared.pendingReverts[last.original.lowercased()] ?? 0
+            Log.auto.info("revert '\(last.original, privacy: .public)' (count=\(count) promoted=\(promoted))")
+        }
         applyState(target)
     }
 

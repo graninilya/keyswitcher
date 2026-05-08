@@ -76,20 +76,43 @@ jobs:
           rm -f /tmp/sparkle_key.pem
           echo "sig_attrs=$SIG_ATTRS" >> $GITHUB_OUTPUT
 
+      - name: Resolve release notes
+        id: notes
+        run: |
+          NOTES_FILE=".github/release-notes/${{ github.ref_name }}.html"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "file=$NOTES_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "file=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate appcast.xml
         run: |
+          NOTES_ARG=""
+          if [ -n "${{ steps.notes.outputs.file }}" ]; then
+            NOTES_ARG="--notes-html ${{ steps.notes.outputs.file }}"
+          fi
           python3 .github/scripts/make_appcast.py \
             --version "${{ steps.version.outputs.version }}" \
             --build "${{ github.run_number }}" \
             --sig-attrs '${{ steps.sign.outputs.sig_attrs }}' \
+            $NOTES_ARG \
             --output App/dist/appcast.xml
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            App/dist/QY-${{ steps.version.outputs.version }}.dmg \
-            App/dist/appcast.xml \
-            --title "${{ github.ref_name }}" \
-            --notes "Auto-generated release. See commits for changes."
+          if [ -n "${{ steps.notes.outputs.file }}" ]; then
+            gh release create "${{ github.ref_name }}" \
+              App/dist/QY-${{ steps.version.outputs.version }}.dmg \
+              App/dist/appcast.xml \
+              --title "${{ github.ref_name }}" \
+              --notes-file "${{ steps.notes.outputs.file }}"
+          else
+            gh release create "${{ github.ref_name }}" \
+              App/dist/QY-${{ steps.version.outputs.version }}.dmg \
+              App/dist/appcast.xml \
+              --title "${{ github.ref_name }}" \
+              --notes "Auto-generated release. See commits for changes."
+          fi

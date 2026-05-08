@@ -33,7 +33,7 @@ final class SettingsWindowController {
 
 
 enum SettingsTab: Hashable {
-    case hotkeys, behavior, updates, about
+    case hotkeys, behavior, exceptions, updates, about
 }
 
 /// Класс-обёртка чтобы SettingsWindowController мог менять выбранный таб извне.
@@ -75,6 +75,9 @@ struct SettingsRoot: View {
                 BehaviorTab()
                     .tabItem { Label("Поведение", systemImage: "slider.horizontal.3") }
                     .tag(SettingsTab.behavior)
+                ExceptionsTab()
+                    .tabItem { Label("Исключения", systemImage: "list.bullet.rectangle") }
+                    .tag(SettingsTab.exceptions)
                 UpdatesTab()
                     .tabItem { Label("Обновления", systemImage: "arrow.down.circle") }
                     .tag(SettingsTab.updates)
@@ -201,6 +204,152 @@ private struct BehaviorRow<Trailing: View>: View {
             Spacer()
             trailing()
         }
+    }
+}
+
+// MARK: - Исключения
+
+struct ExceptionsTab: View {
+    @ObservedObject private var settings = Settings.shared
+    @State private var newWord: String = ""
+
+    private var sortedIgnored: [String] {
+        settings.ignoredAutoSwap.sorted()
+    }
+
+    private var sortedPending: [(word: String, count: Int)] {
+        settings.pendingReverts
+            .map { (word: $0.key, count: $0.value) }
+            .sorted { $0.word < $1.word }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Слова которые Q*Й не будет автоматически заменять")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Слово попадёт сюда когда ты откатишь его авто-замену через Option \(settings.revertThreshold) раз. Или добавь вручную.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            HStack {
+                TextField("новое слово", text: $newWord)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addWord)
+                Button("Добавить", action: addWord)
+                    .disabled(newWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 20)
+
+            Divider()
+
+            if sortedIgnored.isEmpty && sortedPending.isEmpty {
+                VStack {
+                    Spacer()
+                    Image(systemName: "tray")
+                        .font(.system(size: 36))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("Список пуст")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(sortedIgnored, id: \.self) { word in
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.system(size: 12))
+                                Text(word)
+                                    .font(.system(size: 13, design: .monospaced))
+                                Spacer()
+                                Button {
+                                    settings.removeIgnored(word)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 14))
+                                }
+                                .buttonStyle(.plain)
+                                .help("Удалить из исключений")
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 20)
+                            Divider().opacity(0.4)
+                        }
+
+                        if !sortedPending.isEmpty {
+                            HStack {
+                                Text("Откатываются — пока ещё свапаются")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                    .tracking(0.4)
+                                Spacer()
+                            }
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
+                            .padding(.horizontal, 20)
+
+                            ForEach(sortedPending, id: \.word) { row in
+                                HStack {
+                                    Image(systemName: "clock")
+                                        .foregroundColor(.orange)
+                                        .font(.system(size: 12))
+                                    Text(row.word)
+                                        .font(.system(size: 13, design: .monospaced))
+                                    Spacer()
+                                    Text("\(row.count) / \(settings.revertThreshold)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                    Button {
+                                        settings.pendingReverts.removeValue(forKey: row.word)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                            .font(.system(size: 14))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Сбросить счётчик")
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 20)
+                                Divider().opacity(0.4)
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Text("В исключениях: \(sortedIgnored.count) · откатывается: \(sortedPending.count)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if !sortedIgnored.isEmpty || !sortedPending.isEmpty {
+                    Button("Очистить всё") {
+                        settings.ignoredAutoSwap.removeAll()
+                        settings.pendingReverts.removeAll()
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+    }
+
+    private func addWord() {
+        let trimmed = newWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        settings.addIgnored(trimmed)
+        newWord = ""
     }
 }
 

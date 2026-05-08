@@ -16,7 +16,7 @@ final class LayoutMap {
     /// Среднее лог-вероятностей триграмм. Пропуски штрафуются `missingTrigramPenalty`.
     /// Слова из реального языка обычно даёт −5…−15. Случайный мусор ≤ −20.
     private let plausibilityThreshold: Double = -20.0
-    private let missingTrigramPenalty: Double = -25.0
+    private let missingTrigramPenalty: Double = -20.0
 
     private init() {
         let standardLayout: LayoutFile = LayoutMap.load("layout_map")
@@ -114,6 +114,8 @@ final class LayoutMap {
 
     func autoConvert(_ word: String) -> String? {
         let lower = word.lowercased()
+
+        if Settings.shared.ignoredAutoSwap.contains(lower) { return nil }
 
         // Одиночная буква-предлог: конвертим только при совпадении свапа с контекстом —
         // иначе одиночные `a` / `i` всегда бы конвертились в русские `ф` / `ш`

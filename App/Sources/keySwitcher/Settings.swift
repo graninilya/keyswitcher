@@ -110,6 +110,17 @@ final class Settings: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet { applyLaunchAtLogin(launchAtLogin) }
     }
+    @Published var ignoredAutoSwap: Set<String> {
+        didSet {
+            UserDefaults.standard.set(Array(ignoredAutoSwap), forKey: "ignoredAutoSwap")
+        }
+    }
+    @Published var pendingReverts: [String: Int] {
+        didSet {
+            UserDefaults.standard.set(pendingReverts, forKey: "pendingReverts")
+        }
+    }
+    let revertThreshold: Int = 3
 
     private init() {
         let d = UserDefaults.standard
@@ -122,6 +133,38 @@ final class Settings: ObservableObject {
         self.soundsEnabled = d.object(forKey: "soundsEnabled") as? Bool ?? false
         self.enabled = d.object(forKey: "enabled") as? Bool ?? true
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
+        let stored = (d.array(forKey: "ignoredAutoSwap") as? [String]) ?? []
+        self.ignoredAutoSwap = Set(stored.map { $0.lowercased() })
+        self.pendingReverts = (d.dictionary(forKey: "pendingReverts") as? [String: Int]) ?? [:]
+    }
+
+    func addIgnored(_ word: String) {
+        let key = word.lowercased()
+        guard !key.isEmpty else { return }
+        if !ignoredAutoSwap.contains(key) {
+            ignoredAutoSwap.insert(key)
+        }
+        pendingReverts.removeValue(forKey: key)
+    }
+
+    func removeIgnored(_ word: String) {
+        ignoredAutoSwap.remove(word.lowercased())
+    }
+
+    @discardableResult
+    func recordRevert(_ word: String) -> Bool {
+        let key = word.lowercased()
+        guard !key.isEmpty else { return false }
+        if ignoredAutoSwap.contains(key) { return false }
+        let next = (pendingReverts[key] ?? 0) + 1
+        if next >= revertThreshold {
+            pendingReverts.removeValue(forKey: key)
+            ignoredAutoSwap.insert(key)
+            return true
+        } else {
+            pendingReverts[key] = next
+            return false
+        }
     }
 
     private func applyLaunchAtLogin(_ on: Bool) {

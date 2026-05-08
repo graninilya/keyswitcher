@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Генерирует appcast.xml для Sparkle.
-
-`--sig-attrs` принимает raw-вывод `sign_update -f <key> <dmg>` —
-строку вида `sparkle:edSignature="..." length="..."`.
-"""
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +14,7 @@ TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
     <item>
       <title>v{version}</title>
       <pubDate>{pubdate}</pubDate>
-      <enclosure
+{description_block}      <enclosure
         url="https://github.com/graninilya/keyswitcher/releases/download/v{version}/QY-{version}.dmg"
         sparkle:version="{build}"
         sparkle:shortVersionString="{version}"
@@ -32,12 +27,22 @@ TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
+def build_description_block(notes_path: str | None) -> str:
+    if not notes_path:
+        return ""
+    html = Path(notes_path).read_text(encoding="utf-8").strip()
+    if not html:
+        return ""
+    return f"      <description><![CDATA[\n{html}\n      ]]></description>\n"
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--version", required=True)
     p.add_argument("--build", required=True)
-    p.add_argument("--sig-attrs", default='length="0"',
-                   help='Raw output of sign_update (sparkle:edSignature="..." length="...")')
+    p.add_argument("--sig-attrs", default='length="0"')
+    p.add_argument("--notes-html",
+                   help="Path to HTML file with release notes shown in Sparkle's update prompt")
     p.add_argument("--output", required=True)
     args = p.parse_args()
 
@@ -47,6 +52,7 @@ def main():
         build=args.build,
         pubdate=pubdate,
         sig_attrs=args.sig_attrs.strip(),
+        description_block=build_description_block(args.notes_html),
     )
     Path(args.output).write_text(out, encoding="utf-8")
     print(f"→ {args.output}")
