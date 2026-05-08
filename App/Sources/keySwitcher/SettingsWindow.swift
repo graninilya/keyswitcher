@@ -33,7 +33,7 @@ final class SettingsWindowController {
 
 
 enum SettingsTab: Hashable {
-    case hotkeys, behavior, exceptions, updates, about
+    case hotkeys, behavior, ai, exceptions, updates, about
 }
 
 /// Класс-обёртка чтобы SettingsWindowController мог менять выбранный таб извне.
@@ -75,6 +75,9 @@ struct SettingsRoot: View {
                 BehaviorTab()
                     .tabItem { Label("Поведение", systemImage: "slider.horizontal.3") }
                     .tag(SettingsTab.behavior)
+                AITab()
+                    .tabItem { Label("AI", systemImage: "wand.and.stars") }
+                    .tag(SettingsTab.ai)
                 ExceptionsTab()
                     .tabItem { Label("Исключения", systemImage: "list.bullet.rectangle") }
                     .tag(SettingsTab.exceptions)
@@ -129,6 +132,16 @@ struct HotkeysTab: View {
                         set: { settings.hotkeys.transliterate = $0 }
                     ),
                     allowsModifierOnly: false
+                )
+                HotkeyRow(
+                    title: "Расставить пунктуацию и опечатки",
+                    subtitle: "Через AI: выделение или текущая строка",
+                    icon: "wand.and.stars",
+                    binding: Binding(
+                        get: { settings.hotkeys.polishText },
+                        set: { settings.hotkeys.polishText = $0 }
+                    ),
+                    allowsModifierOnly: true
                 )
                 HotkeyRow(
                     title: "Включить / выключить Q*Й",
@@ -350,6 +363,84 @@ struct ExceptionsTab: View {
         guard !trimmed.isEmpty else { return }
         settings.addIgnored(trimmed)
         newWord = ""
+    }
+}
+
+// MARK: - AI
+
+struct AIModelOption: Identifiable, Hashable {
+    let id: String
+    let label: String
+    let note: String
+}
+
+struct AITab: View {
+    @ObservedObject private var settings = Settings.shared
+
+    private let models: [AIModelOption] = [
+        .init(id: "@cf/google/gemma-3-12b-it",
+              label: "Gemma 3 (12B)",
+              note: "Рекомендуется. Быстрая (~400мс), лучший русский на тестах."),
+        .init(id: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+              label: "Llama 3.3 (70B fast)",
+              note: "Мощнее, медленнее (~600мс). Лучше для сложных длинных текстов."),
+        .init(id: "@cf/mistralai/mistral-small-3.1-24b-instruct",
+              label: "Mistral Small 3.1 (24B)",
+              note: "Альтернатива. Иногда ставит точки вместо запятых."),
+        .init(id: "@cf/qwen/qwq-32b",
+              label: "Qwen QwQ (32B)",
+              note: "Reasoning-модель. Медленнее, для самых сложных случаев."),
+        .init(id: "@cf/meta/llama-3.1-8b-instruct-fast",
+              label: "Llama 3.1 (8B fast)",
+              note: "Самая быстрая (~200мс), но русский знает плохо."),
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                BehaviorRow(
+                    icon: "wand.and.stars",
+                    title: "Расстановка пунктуации и опечаток",
+                    subtitle: "Хоткей в разделе Хоткеи. По умолчанию — правый Option."
+                ) {
+                    Toggle("", isOn: $settings.aiEnabled).labelsHidden()
+                }
+
+                Divider().padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Модель")
+                        .font(.system(size: 13, weight: .medium))
+                    Picker("", selection: $settings.aiModel) {
+                        ForEach(models) { m in
+                            Text(m.label).tag(m.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .disabled(!settings.aiEnabled)
+
+                    if let current = models.first(where: { $0.id == settings.aiModel }) {
+                        Text(current.note)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Divider().padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("О приватности")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Текст отправляется на сервер Cloudflare Workers AI и обрабатывается на их серверах. Запросы не логируются и не используются для обучения. Все остальные функции Q*Й работают локально.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(20)
+        }
     }
 }
 

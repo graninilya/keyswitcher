@@ -308,6 +308,27 @@ private struct DemoStep: View {
                       phase: "✓ РЕЗУЛЬТАТ", duration: 3.0),
             ]
         ),
+
+        // СЦЕНА 5: расстановка пунктуации и опечаток через AI
+        DemoScene(
+            title: "Пунктуация и опечатки одной кнопкой",
+            frames: [
+                .init(text: "купил масло хлеб молоко",
+                      caption: "Написал быстро, без знаков препинания",
+                      phase: "ИСХОДНЫЙ ТЕКСТ", duration: 1.8),
+                .init(text: "купил масло хлеб молоко",
+                      caption: "Не нужно ничего выделять — Q*Й сам возьмёт строку",
+                      phase: "БЕЗ ВЫДЕЛЕНИЯ", duration: 1.8),
+                .init(text: "купил масло хлеб молоко",
+                      caption: "Жми правый Option",
+                      keyPress: "⌥",
+                      phase: "ХОТКЕЙ", duration: 1.8),
+                .init(text: "Купил масло, хлеб, молоко.",
+                      caption: "AI расставил запятые и заглавные. Если что-то не так — левый Option откатит",
+                      highlighted: true, celebrate: true,
+                      phase: "✓ РЕЗУЛЬТАТ", duration: 3.2),
+            ]
+        ),
     ]
 
     @State private var sceneIndex: Int = 0

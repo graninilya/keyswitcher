@@ -67,6 +67,52 @@ enum SelectionDetector {
         return currentSelectionInfo()?.text
     }
 
+    static func expandToParagraphAndReturnText() -> String? {
+        let system = AXUIElementCreateSystemWide()
+
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            system, kAXFocusedUIElementAttribute as CFString, &focusedRef
+        ) == .success, focusedRef != nil else { return nil }
+        let element = focusedRef as! AXUIElement
+
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXValueAttribute as CFString, &valueRef
+        ) == .success, let text = valueRef as? String else { return nil }
+
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXSelectedTextRangeAttribute as CFString, &rangeRef
+        ) == .success, let raw = rangeRef,
+              CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+        let axValue = raw as! AXValue
+        var range = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+
+        let ns = text as NSString
+        var paraStart = max(0, min(range.location, ns.length))
+        while paraStart > 0 {
+            if ns.character(at: paraStart - 1) == 0x0A { break }
+            paraStart -= 1
+        }
+        var paraEnd = max(0, min(range.location + range.length, ns.length))
+        while paraEnd < ns.length {
+            if ns.character(at: paraEnd) == 0x0A { break }
+            paraEnd += 1
+        }
+        guard paraEnd > paraStart else { return nil }
+
+        var newRange = CFRange(location: paraStart, length: paraEnd - paraStart)
+        guard let newAX = AXValueCreate(.cfRange, &newRange) else { return nil }
+        let setResult = AXUIElementSetAttributeValue(
+            element, kAXSelectedTextRangeAttribute as CFString, newAX
+        )
+        guard setResult == .success else { return nil }
+
+        return ns.substring(with: NSRange(location: paraStart, length: paraEnd - paraStart))
+    }
+
     private static func _legacyCurrentSelectedText_unused() -> String? {
         let system = AXUIElementCreateSystemWide()
 

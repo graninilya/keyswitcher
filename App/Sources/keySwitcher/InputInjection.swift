@@ -19,6 +19,17 @@ final class InputInjection {
         }
     }
 
+    func sendCommandShift(keyCode: CGKeyCode) {
+        muteAndPost { src in
+            let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
+            let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
+            down?.flags = [.maskCommand, .maskShift]
+            up?.flags = [.maskCommand, .maskShift]
+            down?.post(tap: .cghidEventTap)
+            up?.post(tap: .cghidEventTap)
+        }
+    }
+
     func sendKey(keyCode: CGKeyCode) {
         muteAndPost { src in
             let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)

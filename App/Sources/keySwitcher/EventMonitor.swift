@@ -279,6 +279,7 @@ struct ModifierHotkey: Codable, Equatable {
     }
 
     static let leftOption = ModifierHotkey(keyCode: 58)
+    static let rightOption = ModifierHotkey(keyCode: 61)
 }
 
 

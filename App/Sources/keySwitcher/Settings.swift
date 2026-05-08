@@ -7,22 +7,24 @@ struct HotkeyConfig: Codable {
     var forceSwap: HotkeyBinding
     var transliterate: HotkeyBinding
     var toggleEnabled: HotkeyBinding
+    var polishText: HotkeyBinding
 
-    // Дефолт для toggleEnabled — чтобы старые сохранения без этого поля корректно загружались
     init(
         smartConvert: HotkeyBinding,
         forceSwap: HotkeyBinding,
         transliterate: HotkeyBinding,
-        toggleEnabled: HotkeyBinding = .disabled
+        toggleEnabled: HotkeyBinding = .disabled,
+        polishText: HotkeyBinding = .modifier(ModifierHotkey.rightOption)
     ) {
         self.smartConvert = smartConvert
         self.forceSwap = forceSwap
         self.transliterate = transliterate
         self.toggleEnabled = toggleEnabled
+        self.polishText = polishText
     }
 
     enum CodingKeys: String, CodingKey {
-        case smartConvert, forceSwap, transliterate, toggleEnabled
+        case smartConvert, forceSwap, transliterate, toggleEnabled, polishText
     }
 
     init(from decoder: Decoder) throws {
@@ -31,13 +33,16 @@ struct HotkeyConfig: Codable {
         self.forceSwap = try c.decode(HotkeyBinding.self, forKey: .forceSwap)
         self.transliterate = try c.decode(HotkeyBinding.self, forKey: .transliterate)
         self.toggleEnabled = try c.decodeIfPresent(HotkeyBinding.self, forKey: .toggleEnabled) ?? .disabled
+        self.polishText = try c.decodeIfPresent(HotkeyBinding.self, forKey: .polishText)
+            ?? .modifier(ModifierHotkey.rightOption)
     }
 
     static let `default` = HotkeyConfig(
         smartConvert: .modifier(ModifierHotkey.leftOption),
         forceSwap:    .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 3)),
         transliterate: .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 17)),
-        toggleEnabled: .disabled
+        toggleEnabled: .disabled,
+        polishText: .modifier(ModifierHotkey.rightOption)
     )
 }
 
@@ -122,6 +127,19 @@ final class Settings: ObservableObject {
     }
     let revertThreshold: Int = 3
 
+    @Published var aiWorkerURL: String {
+        didSet { UserDefaults.standard.set(aiWorkerURL, forKey: "aiWorkerURL") }
+    }
+    @Published var aiModel: String {
+        didSet { UserDefaults.standard.set(aiModel, forKey: "aiModel") }
+    }
+    @Published var aiEnabled: Bool {
+        didSet { UserDefaults.standard.set(aiEnabled, forKey: "aiEnabled") }
+    }
+
+    static let defaultWorkerURL = "https://qkb-llm.graninilya.workers.dev"
+    static let defaultAIModel = "@cf/google/gemma-3-12b-it"
+
     private init() {
         let d = UserDefaults.standard
         if let data = d.data(forKey: "hotkeys"),
@@ -136,6 +154,9 @@ final class Settings: ObservableObject {
         let stored = (d.array(forKey: "ignoredAutoSwap") as? [String]) ?? []
         self.ignoredAutoSwap = Set(stored.map { $0.lowercased() })
         self.pendingReverts = (d.dictionary(forKey: "pendingReverts") as? [String: Int]) ?? [:]
+        self.aiWorkerURL = d.string(forKey: "aiWorkerURL") ?? Settings.defaultWorkerURL
+        self.aiModel = d.string(forKey: "aiModel") ?? Settings.defaultAIModel
+        self.aiEnabled = d.object(forKey: "aiEnabled") as? Bool ?? true
     }
 
     func addIgnored(_ word: String) {

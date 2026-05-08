@@ -76,6 +76,93 @@ final class ClipboardConverter {
         }
     }
 
+    func polishCurrentTargetAsync(_ transform: @escaping (String) async -> String?) {
+        let pb = NSPasteboard.general
+        let savedItems = backupPasteboard(pb)
+
+        if let sel = SelectionDetector.currentSelectedText(), !sel.isEmpty {
+            Log.clipboard.info("polish: AX selection (\(sel.count) chars)")
+            polishWithText(sel, pb: pb, savedItems: savedItems, transform: transform)
+            return
+        }
+
+        let prevChangeCount = pb.changeCount
+        sendCommand(keyCode: 8)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self = self else { return }
+            let copied = pb.string(forType: .string) ?? ""
+            if pb.changeCount > prevChangeCount, !copied.isEmpty {
+                Log.clipboard.info("polish: captured existing selection (\(copied.count) chars)")
+                self.polishWithText(copied, pb: pb, savedItems: savedItems, transform: transform)
+                return
+            }
+
+            if let para = SelectionDetector.expandToParagraphAndReturnText(), !para.isEmpty {
+                Log.clipboard.info("polish: AX paragraph (\(para.count) chars)")
+                self.polishWithText(para, pb: pb, savedItems: savedItems, transform: transform)
+                return
+            }
+
+            Log.clipboard.info("polish: AX failed → keyboard line fallback")
+            InputInjection.shared.sendCommand(keyCode: 124)
+            usleep(40_000)
+            InputInjection.shared.sendCommandShift(keyCode: 123)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                self.captureAfterExpand(pb: pb, prevChangeCount: prevChangeCount,
+                                        savedItems: savedItems, transform: transform)
+            }
+        }
+    }
+
+    private func captureAfterExpand(pb: NSPasteboard,
+                                    prevChangeCount: Int,
+                                    savedItems: [(NSPasteboard.PasteboardType, Data)],
+                                    transform: @escaping (String) async -> String?) {
+        let cc = pb.changeCount
+        sendCommand(keyCode: 8)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self = self else { return }
+            let copied = pb.string(forType: .string) ?? ""
+            guard pb.changeCount > cc, !copied.isEmpty else {
+                Log.clipboard.info("polish: line empty after expand")
+                self.restorePasteboard(pb, items: savedItems)
+                return
+            }
+            self.polishWithText(copied, pb: pb, savedItems: savedItems, transform: transform)
+        }
+    }
+
+    private func polishWithText(_ original: String,
+                                pb: NSPasteboard,
+                                savedItems: [(NSPasteboard.PasteboardType, Data)],
+                                transform: @escaping (String) async -> String?) {
+        Log.clipboard.info("polish input: '\(original, privacy: .public)'")
+        let savedLayout = InputSourceSwitcher.current()
+        Task { @MainActor in
+            guard let new = await transform(original) else {
+                Log.clipboard.info("polish: transform returned nil")
+                self.restorePasteboard(pb, items: savedItems)
+                return
+            }
+            guard new != original else {
+                Log.clipboard.info("polish: unchanged")
+                self.restorePasteboard(pb, items: savedItems)
+                return
+            }
+            Log.clipboard.info("polish output: '\(new, privacy: .public)'")
+            self.typeUnicode(new)
+            AutoConverter.shared.record(
+                original: original, converted: new, tail: "",
+                originalLayout: savedLayout
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.restorePasteboard(pb, items: savedItems)
+            }
+        }
+    }
+
     private func replaceSelection(original: String, transform: (String) -> String?,
                                   pasteboard: NSPasteboard,
                                   savedItems: [(NSPasteboard.PasteboardType, Data)]) {

@@ -155,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bind(settings.hotkeys.smartConvert,        action: { [weak self] in self?.smartConvert() })
         bind(settings.hotkeys.forceSwap,           action: { [weak self] in self?.forceSwap() })
         bind(settings.hotkeys.transliterate,       action: { [weak self] in self?.transliterate() })
+        bind(settings.hotkeys.polishText,          action: { [weak self] in self?.polishText() })
         bindToggleEnabled(settings.hotkeys.toggleEnabled)
     }
 
@@ -266,6 +267,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func transliterate() {
         logHotkey("transliterate")
         converter.convertSelectionOnly { Transliteration.apply($0) }
+    }
+
+    @objc private func polishText() {
+        logHotkey("polishText")
+        guard settings.aiEnabled else {
+            Log.hotkey.info("polish: AI disabled in Settings")
+            return
+        }
+        converter.polishCurrentTargetAsync { text in
+            switch await LLMPolisher.polish(text) {
+            case .success(let polished): return polished
+            case .failure(let err):
+                Log.hotkey.info("polish error: \(err.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }
     }
 
     @objc private func openSettings() {
