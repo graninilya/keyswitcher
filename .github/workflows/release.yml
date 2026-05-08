@@ -56,8 +56,8 @@ jobs:
 
       - name: Build DMG
         run: |
-          chmod +x scripts/make_dmg.sh
-          scripts/make_dmg.sh ${{ steps.version.outputs.version }}
+          chmod +x .github/scripts/make_dmg.sh
+          .github/scripts/make_dmg.sh ${{ steps.version.outputs.version }}
 
       - name: Sign DMG with Sparkle EdDSA
         id: sign
@@ -78,7 +78,7 @@ jobs:
 
       - name: Generate appcast.xml
         run: |
-          python3 scripts/make_appcast.py \
+          python3 .github/scripts/make_appcast.py \
             --version "${{ steps.version.outputs.version }}" \
             --build "${{ github.run_number }}" \
             --sig-attrs '${{ steps.sign.outputs.sig_attrs }}' \

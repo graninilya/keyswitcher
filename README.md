@@ -33,27 +33,20 @@ Then grant Accessibility permission in **System Settings → Privacy & Security 
 
 ## Building from source
 
-Requirements: Xcode Command Line Tools, Python 3 with Pillow + cairosvg (`pip3 install --break-system-packages pillow cairosvg`).
+Requirements: Xcode Command Line Tools.
 
 ```bash
 git clone https://github.com/graninilya/keyswitcher.git
-cd keyswitcher
-
-# Generate dictionary assets (one-time)
-python3 scripts/build_assets.py
-
-# Generate icons
-python3 scripts/make_icon_from_source.py
-python3 scripts/make_menubar_icon.py
-
-# Build the app
-cd App
+cd keyswitcher/App
 ./build.sh
 
 # Output: App/dist/keySwitcher.app
 ```
 
 Move/copy `dist/keySwitcher.app` to `/Applications/` (rename to `Q*Й.app` if you want).
+
+Dictionary JSONs and the AppIcon are committed under `dictionaries/processed/` and
+`App/icons/` respectively, so a fresh clone builds without extra tooling.
 
 ## How auto-detection works
 
