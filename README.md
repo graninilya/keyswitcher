@@ -84,7 +84,9 @@
 - В **Настройках → AI** можно выбрать модель (Gemma 3 12B по умолчанию, есть Llama 3.3 70B и др.) или полностью отключить фичу.
 - Не требует регистрации, ключей или подписок — облачная инфраструктура за счёт автора.
 
-**Приватность:** только при нажатии хоткея текущий параграф/выделение отправляется на серверы Cloudflare Workers AI. Без хоткея ничего никуда не уходит.
+**Свой API ключ.** Вместо встроенного сервера можно подставить любой OpenAI-совместимый endpoint — OpenAI, Groq, OpenRouter, Together, локальный Ollama / LM Studio и т.д. В **Настройках → AI → Свой API** заполняешь URL (например `https://api.openai.com/v1/chat/completions`), ключ и имя модели — текст уходит туда вместо общего сервера. Можно очистить поля и вернуться к встроенному.
+
+**Приватность:** только при нажатии хоткея текущий параграф/выделение отправляется на серверы Cloudflare Workers AI (или твой собственный endpoint, если настроен). Без хоткея ничего никуда не уходит.
 
 ---
 
@@ -176,7 +178,9 @@ Press **right Option** to send the current paragraph (or selection) to a cloud L
 
 **Configuration:** in **Settings → AI** you can pick the model (Gemma 3 12B by default, also Llama 3.3 70B and others) or disable the feature entirely. No signup, no API keys, no subscription — the cloud infrastructure is hosted by the author.
 
-**Privacy:** only when you press the hotkey, the current paragraph/selection is sent to Cloudflare Workers AI. Without the hotkey nothing leaves your machine.
+**Use your own API key.** Instead of the bundled server you can point the polish hotkey at any OpenAI-compatible endpoint — OpenAI, Groq, OpenRouter, Together, a local Ollama / LM Studio, etc. In **Settings → AI → Свой API** fill in the URL (e.g. `https://api.openai.com/v1/chat/completions`), key, and model name — text will be sent there instead of the shared server. Clear the fields to return to the bundled server.
+
+**Privacy:** only when you press the hotkey, the current paragraph/selection is sent to Cloudflare Workers AI (or to your custom endpoint, if configured). Without the hotkey nothing leaves your machine.
 
 ### Requirements
 

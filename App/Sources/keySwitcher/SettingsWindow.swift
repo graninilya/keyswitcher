@@ -21,7 +21,10 @@ final class SettingsWindowController {
         let hosting = NSHostingController(rootView: SettingsRoot(host: host))
         let w = NSWindow(contentViewController: hosting)
         w.title = "Q*Й — настройки"
-        w.styleMask = [.titled, .closable]
+        w.styleMask = [.titled, .closable, .fullSizeContentView]
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.isMovableByWindowBackground = true
         w.setContentSize(NSSize(width: 560, height: 520))
         w.center()
         w.isReleasedWhenClosed = false
@@ -48,23 +51,8 @@ struct SettingsRoot: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Глобальный enable/disable — над табами, всегда виден.
-            HStack(spacing: 10) {
-                Toggle("", isOn: $settings.enabled)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Q*Й")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(settings.enabled ? "Активно" : "Выключено")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
+            HeroHeader(enabled: $settings.enabled)
+                .ignoresSafeArea(edges: .top)
 
             Divider()
 
@@ -94,6 +82,87 @@ struct SettingsRoot: View {
     }
 }
 
+
+// MARK: - Hero header
+
+private struct HeroHeader: View {
+    @Binding var enabled: Bool
+
+    @State private var customBG: Color? = nil
+    @State private var logoHue: Angle = .zero
+
+    private static let defaultBG = Color(red: 0.30, green: 0.74, blue: 0.55)
+    private static let disabledBG = Color(red: 0.42, green: 0.42, blue: 0.46)
+
+    private var bg: Color {
+        if !enabled { return Self.disabledBG }
+        return customBG ?? Self.defaultBG
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [bg, bg.opacity(0.78)],
+                startPoint: .top, endPoint: .bottom
+            )
+
+            HStack(alignment: .center, spacing: 14) {
+                logoView()
+                    .frame(width: 56, height: 56)
+                    .hueRotation(enabled ? logoHue : .zero)
+                    .saturation(enabled ? 1.0 : 0.0)
+                    .opacity(enabled ? 1.0 : 0.6)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("KEYSWITCHER")
+                        .font(.system(size: 18, weight: .heavy))
+                        .tracking(1.4)
+                        .foregroundColor(.white)
+                    Text(enabled ? "Активно" : "Выключено")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.85))
+                }
+                Spacer()
+                Toggle("", isOn: $enabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.large)
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 28)
+            .padding(.bottom, 14)
+        }
+        .frame(height: 110)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                let hue = Double.random(in: 0...1)
+                customBG = Color(hue: hue, saturation: 0.55, brightness: 0.72)
+                logoHue = .degrees(Double.random(in: -180...180))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: enabled)
+    }
+
+    @ViewBuilder
+    private func logoView() -> some View {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let img = NSImage(contentsOf: url) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else if let app = NSImage(named: NSImage.applicationIconName) {
+            Image(nsImage: app)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            Image(systemName: "keyboard")
+                .font(.system(size: 30))
+                .foregroundColor(.white)
+        }
+    }
+}
 
 // MARK: - Хоткеи
 
@@ -418,8 +487,16 @@ struct AITab: View {
                 Divider().padding(.vertical, 4)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Модель")
-                        .font(.system(size: 13, weight: .medium))
+                    HStack {
+                        Text("Модель (встроенный сервер)")
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        if settings.useCustomAPI {
+                            Text("не используется")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
                     Picker("", selection: $settings.aiModel) {
                         ForEach(models) { m in
                             Text(m.label).tag(m.id)
@@ -427,7 +504,7 @@ struct AITab: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
-                    .disabled(!settings.aiEnabled)
+                    .disabled(!settings.aiEnabled || settings.useCustomAPI)
 
                     if let current = models.first(where: { $0.id == settings.aiModel }) {
                         Text(current.note)
@@ -439,10 +516,58 @@ struct AITab: View {
 
                 Divider().padding(.vertical, 4)
 
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Свой API (OpenAI-совместимый)")
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer()
+                        if settings.useCustomAPI {
+                            Text("активен")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.green)
+                        }
+                    }
+                    Text("Если заполнены URL, ключ и модель — текст уйдёт на твой сервер вместо Cloudflare. Подойдёт OpenAI, Groq, OpenRouter, Together, локальный Ollama / LM Studio и любой другой совместимый эндпоинт.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("URL (например https://api.openai.com/v1/chat/completions)",
+                                  text: $settings.customApiEndpoint)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(!settings.aiEnabled)
+                        SecureField("API key (sk-...)",
+                                    text: $settings.customApiKey)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(!settings.aiEnabled)
+                        TextField("Модель (например gpt-4o-mini)",
+                                  text: $settings.customApiModel)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(!settings.aiEnabled)
+                    }
+
+                    if !settings.customApiKey.isEmpty || !settings.customApiEndpoint.isEmpty {
+                        HStack {
+                            Spacer()
+                            Button("Очистить") {
+                                settings.customApiEndpoint = ""
+                                settings.customApiKey = ""
+                                settings.customApiModel = ""
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+
+                Divider().padding(.vertical, 4)
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("О приватности")
                         .font(.system(size: 13, weight: .medium))
-                    Text("Текст отправляется на сервер Cloudflare Workers AI и обрабатывается на их серверах. Запросы не логируются и не используются для обучения. Все остальные функции Q*Й работают локально.")
+                    Text(settings.useCustomAPI
+                         ? "Текст уходит на указанный тобой эндпоинт. Q*Й ничего не логирует и не пересылает на свои серверы."
+                         : "Текст отправляется на сервер Cloudflare Workers AI и обрабатывается на их серверах. Запросы не логируются и не используются для обучения. Все остальные функции Q*Й работают локально.")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

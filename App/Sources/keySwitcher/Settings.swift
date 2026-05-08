@@ -140,6 +140,21 @@ final class Settings: ObservableObject {
         didSet { UserDefaults.standard.set(aiEnabled, forKey: "aiEnabled") }
     }
 
+    @Published var customApiEndpoint: String {
+        didSet { UserDefaults.standard.set(customApiEndpoint, forKey: "customApiEndpoint") }
+    }
+    @Published var customApiKey: String {
+        didSet { UserDefaults.standard.set(customApiKey, forKey: "customApiKey") }
+    }
+    @Published var customApiModel: String {
+        didSet { UserDefaults.standard.set(customApiModel, forKey: "customApiModel") }
+    }
+
+    var useCustomAPI: Bool {
+        !customApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !customApiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     static let defaultWorkerURL = "https://qkb-llm.graninilya.workers.dev"
     static let defaultAIModel = "@cf/google/gemma-3-12b-it"
 
@@ -166,6 +181,9 @@ final class Settings: ObservableObject {
         self.aiWorkerURL = d.string(forKey: "aiWorkerURL") ?? Settings.defaultWorkerURL
         self.aiModel = d.string(forKey: "aiModel") ?? Settings.defaultAIModel
         self.aiEnabled = d.object(forKey: "aiEnabled") as? Bool ?? true
+        self.customApiEndpoint = d.string(forKey: "customApiEndpoint") ?? ""
+        self.customApiKey = d.string(forKey: "customApiKey") ?? ""
+        self.customApiModel = d.string(forKey: "customApiModel") ?? ""
     }
 
     func addIgnored(_ word: String) {

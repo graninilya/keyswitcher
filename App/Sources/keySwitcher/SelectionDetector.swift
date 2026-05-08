@@ -91,6 +91,15 @@ enum SelectionDetector {
         guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
 
         let ns = text as NSString
+
+        var totalRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element, kAXNumberOfCharactersAttribute as CFString, &totalRef
+        ) == .success, let total = totalRef as? Int, total != ns.length {
+            Log.selection.info("AX value truncated: total=\(total) value-len=\(ns.length) — bail")
+            return nil
+        }
+
         var paraStart = max(0, min(range.location, ns.length))
         while paraStart > 0 {
             if ns.character(at: paraStart - 1) == 0x0A { break }
@@ -103,12 +112,32 @@ enum SelectionDetector {
         }
         guard paraEnd > paraStart else { return nil }
 
+        let hasNewlineBefore = paraStart > 0
+        let hasNewlineAfter = paraEnd < ns.length
+        if !hasNewlineBefore && !hasNewlineAfter && (paraEnd - paraStart) < 200 {
+            Log.selection.info("AX value spans short text without \\n bounds — likely visible-line-only — bail")
+            return nil
+        }
+
         var newRange = CFRange(location: paraStart, length: paraEnd - paraStart)
         guard let newAX = AXValueCreate(.cfRange, &newRange) else { return nil }
         let setResult = AXUIElementSetAttributeValue(
             element, kAXSelectedTextRangeAttribute as CFString, newAX
         )
         guard setResult == .success else { return nil }
+
+        var verifyRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXSelectedTextRangeAttribute as CFString, &verifyRef
+        ) == .success,
+              let vRaw = verifyRef,
+              CFGetTypeID(vRaw) == AXValueGetTypeID() else { return nil }
+        var verified = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(vRaw as! AXValue, .cfRange, &verified) else { return nil }
+        guard verified.location == paraStart, verified.length == paraEnd - paraStart else {
+            Log.selection.info("AX setSelectedTextRange ignored by app — fallback")
+            return nil
+        }
 
         return ns.substring(with: NSRange(location: paraStart, length: paraEnd - paraStart))
     }

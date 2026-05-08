@@ -86,51 +86,77 @@ final class ClipboardConverter {
             return
         }
 
-        let prevChangeCount = pb.changeCount
-        sendCommand(keyCode: 8)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            guard let self = self else { return }
-            let copied = pb.string(forType: .string) ?? ""
-            if pb.changeCount > prevChangeCount, !copied.isEmpty {
-                Log.clipboard.info("polish: captured existing selection (\(copied.count) chars)")
-                self.polishWithText(copied, pb: pb, savedItems: savedItems, transform: transform)
-                return
-            }
-
-            if let para = SelectionDetector.expandToParagraphAndReturnText(), !para.isEmpty {
-                Log.clipboard.info("polish: AX paragraph (\(para.count) chars)")
-                self.polishWithText(para, pb: pb, savedItems: savedItems, transform: transform)
-                return
-            }
-
-            Log.clipboard.info("polish: AX failed → keyboard line fallback")
-            InputInjection.shared.sendCommand(keyCode: 124)
-            usleep(40_000)
-            InputInjection.shared.sendCommandShift(keyCode: 123)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
-                self.captureAfterExpand(pb: pb, prevChangeCount: prevChangeCount,
-                                        savedItems: savedItems, transform: transform)
-            }
+        if let para = SelectionDetector.expandToParagraphAndReturnText(), !para.isEmpty {
+            Log.clipboard.info("polish: AX paragraph (\(para.count) chars)")
+            polishWithText(para, pb: pb, savedItems: savedItems, transform: transform)
+            return
         }
+
+        Log.clipboard.info("polish: AX unavailable → keyboard line fallback")
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let preferCmdL = bundleId.hasPrefix("com.sublimetext")
+            || bundleId.hasPrefix("io.zed")
+            || bundleId == "com.microsoft.VSCode"
+            || bundleId == "com.todesktop.230313mzl4w4u92"
+
+        let strategyL: PolishStrategy = .init(name: "Cmd+L", send: sendCmdL, maxChars: 8000)
+        let strategyArrow: PolishStrategy = .init(name: "Cmd+→ Cmd+Shift+←", send: sendArrowExpand, maxChars: 8000)
+
+        let chain: [PolishStrategy] = preferCmdL
+            ? [strategyL, strategyArrow]
+            : [strategyArrow, strategyL]
+        runStrategy(chain, index: 0,
+                    pb: pb, savedItems: savedItems, transform: transform)
     }
 
-    private func captureAfterExpand(pb: NSPasteboard,
-                                    prevChangeCount: Int,
-                                    savedItems: [(NSPasteboard.PasteboardType, Data)],
-                                    transform: @escaping (String) async -> String?) {
-        let cc = pb.changeCount
-        sendCommand(keyCode: 8)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+    private func sendCmdL() {
+        InputInjection.shared.sendCommand(keyCode: 37)
+    }
+
+    private func sendArrowExpand() {
+        InputInjection.shared.sendCommand(keyCode: 124)
+        usleep(40_000)
+        InputInjection.shared.sendCommandShift(keyCode: 123)
+    }
+
+    private struct PolishStrategy {
+        let name: String
+        let send: () -> Void
+        let maxChars: Int
+    }
+
+    private func runStrategy(_ chain: [PolishStrategy],
+                             index: Int,
+                             pb: NSPasteboard,
+                             savedItems: [(NSPasteboard.PasteboardType, Data)],
+                             transform: @escaping (String) async -> String?) {
+        guard index < chain.count else {
+            Log.clipboard.info("polish: all strategies failed")
+            restorePasteboard(pb, items: savedItems)
+            return
+        }
+        let strat = chain[index]
+        strat.send()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
             guard let self = self else { return }
-            let copied = pb.string(forType: .string) ?? ""
-            guard pb.changeCount > cc, !copied.isEmpty else {
-                Log.clipboard.info("polish: line empty after expand")
-                self.restorePasteboard(pb, items: savedItems)
-                return
+            let cc = pb.changeCount
+            self.sendCommand(keyCode: 8)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+                guard let self = self else { return }
+                let copied = pb.string(forType: .string) ?? ""
+                let valid = pb.changeCount > cc && !copied.isEmpty && copied.count <= strat.maxChars
+                if valid {
+                    Log.clipboard.info("polish: \(strat.name) → \(copied.count) chars")
+                    self.polishWithText(copied, pb: pb, savedItems: savedItems, transform: transform)
+                    return
+                }
+                let reason = copied.count > strat.maxChars
+                    ? "too large (\(copied.count) > \(strat.maxChars))"
+                    : "empty"
+                Log.clipboard.info("polish: \(strat.name) \(reason), next")
+                self.runStrategy(chain, index: index + 1,
+                                 pb: pb, savedItems: savedItems, transform: transform)
             }
-            self.polishWithText(copied, pb: pb, savedItems: savedItems, transform: transform)
         }
     }
 
