@@ -14,9 +14,18 @@ Package.resolved
 xcuserdata/
 DerivedData/
 
+# IDE configs (личные настройки)
+.vscode/
+.idea/
+
 # Build artifacts
 App/dist/
 App/icons/AppIcon.iconset/
+
+# Screenshots / scratch images
+**/Снимок*.png
+**/Screen Shot*.png
+**/Screenshot*.png
 
 # Temporary
 /tmp/
