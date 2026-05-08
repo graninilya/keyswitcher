@@ -1,99 +1,117 @@
 # Q*Й
 
-Smart keyboard layout switcher for macOS. Like Punto Switcher / Caramba, but native, open-source, and built for Apple Silicon.
+Умный переключатель раскладок для macOS на Apple Silicon. Замечает когда ты печатаешь в неправильной раскладке (например `ghbdtn` вместо `привет`), сам всё переписывает и переключает раскладку — продолжаешь печатать как ни в чём не бывало.
 
-Detects when you've typed in the wrong layout (e.g., `ghbdtn` instead of `привет`), auto-fixes it, and switches the system input source so you continue in the right layout.
+[English version below](#english) · [Скачать](https://github.com/graninilya/keyswitcher/releases/latest)
 
-## Features
+---
 
-- **Auto-conversion on the fly** — type a word in the wrong layout, hit space, it fixes itself
-- **Smart detector** — uses Russian/English dictionaries + n-gram analysis. Doesn't touch valid words.
-- **Context-aware** — looks at the surrounding text to disambiguate (single letter `f` after Russian text → `а`)
-- **Retro-conversion** — fixes preceding single-letter prepositions retroactively when a word triggers conversion
-- **Mixed-alphabet handling** — `;му`, `'kkf` → `жму`, `элла`. Recognises layout-mistakes even when they include punctuation.
-- **Manual hotkey (default left Option)**:
-  - Toggles the latest replacement back and forth
-  - Or converts the last typed word / current selection
-- **Force swap hotkey** (⌥⇧S) — unconditional layout swap on selection or last word
-- **Transliteration hotkey** (⌥⇧T) — Cyrillic → Latin per GOST 7.79-2000
-- **Quick disable hotkey** — bind any key combo to instantly toggle the app on/off
-- **Cleanup-friendly** — `Cmd+A`, mouse clicks, focus changes all properly invalidate state
-- **Secure-input aware** — disables itself in password fields automatically
-- **Auto-updates** via Sparkle from GitHub releases
+## Возможности
 
-## Installation
+- **Автоматическая замена** — печатаешь слово в неправильной раскладке, ставишь пробел, оно само превращается в правильное.
+- **Умный детектор** — анализирует распределение символов, не трогает валидные слова и редкие имена.
+- **Контекст** — смотрит на соседние слова. Одиночные буквы-предлоги (`f`, `b`) тоже исправляются если контекст это требует.
+- **Откат в одно нажатие** — если автозамена ошиблась, нажми **Option** в течение 5 секунд и текст вернётся как был.
+- **Замена выделенного** — выдели уже набранный кусок (мышкой, Shift+стрелка или Cmd+A) и нажми **Option** — переведёт только выделение.
+- **Транслитерация** (**⌥⇧T**) — кириллица в латиницу по ГОСТ 7.79: «Иванов» → «Ivanov». Удобно для документов и форм.
+- **Принудительный свап** (**⌥⇧S**) — без проверки детектором, всегда меняет раскладку выделения или последнего слова.
+- **Тихие автообновления** — новые версии приходят сами, без походов на сайт.
+- **Безопасно** — приложение отключается само в полях паролей.
 
-Download the latest `.dmg` from [Releases](https://github.com/graninilya/keyswitcher/releases/latest), open it, drag `Q*Й.app` to `Applications`.
+---
 
-First-time launch: macOS will warn that the app is from an unidentified developer (we ad-hoc sign — Apple Developer ID costs $99/year and we keep this free). To open:
-- **Right-click** the app → **Open** → confirm
-- Or in Terminal: `xattr -dr com.apple.quarantine /Applications/Q*Й.app`
+## Установка
 
-Then grant Accessibility permission in **System Settings → Privacy & Security → Accessibility**.
+1. Скачай последний `.dmg` со страницы [Releases](https://github.com/graninilya/keyswitcher/releases/latest).
+2. Открой DMG, перетащи **Q*Й.app** в папку **Программы**.
+3. **Первый запуск:** клик правой кнопкой по приложению → **Открыть** → подтверди в диалоге macOS.
+4. Дай разрешение на **Универсальный доступ (Accessibility)**: Системные настройки → Конфиденциальность и безопасность → Универсальный доступ → добавь Q*Й.
+5. Появится экран приветствия с обучением. Готово.
 
-## Building from source
+Все обновления после этого приходят прозрачно через меню **«Проверить обновления…»**.
 
-Requirements: Xcode Command Line Tools.
+---
 
-```bash
-git clone https://github.com/graninilya/keyswitcher.git
-cd keyswitcher/App
-./build.sh
+## Хоткеи по умолчанию
 
-# Output: App/dist/keySwitcher.app
-```
+| Хоткей | Действие |
+|---|---|
+| **левый Option** | Сменить раскладку выделения / последнего слова. Повторное нажатие в 5 сек — откат. |
+| **⌥⇧S** | Принудительно сменить раскладку (без проверки). |
+| **⌥⇧T** | Транслитерация выделения: кириллица → латиница. |
 
-Move/copy `dist/keySwitcher.app` to `/Applications/` (rename to `Q*Й.app` if you want).
+Все хоткеи можно переназначить в **Настройках → Хоткеи**.
 
-Dictionary JSONs and the AppIcon are committed under `dictionaries/processed/` and
-`App/icons/` respectively, so a fresh clone builds without extra tooling.
+---
 
-## How auto-detection works
+## Системные требования
 
-For each completed word the detector runs through:
+- macOS 13.0 (Ventura) или новее
+- Apple Silicon (M1/M2/M3/M4)
 
-1. Length < 2? → skip (single-letter rule kicks in only for known prepositions)
-2. Word valid in its alphabet's dictionary? → keep
-3. Exact match in Punto-style trigger list (~33k entries)? → swap
-4. Swapped form a valid word in the other language? → swap
-5. Weighted bad-substring score (3-grams weight 1, 4-grams weight 2, 5-grams weight 3, 6-grams weight 4) ≥ 2 AND swap's score ≤ word_score / 1.8 → swap
-6. Context (last 3 words + focused element text via AX) clearly disagrees with current alphabet? → swap
-7. Otherwise → leave alone
+---
 
-After a confident swap, the detector also walks back through preceding single-letter "words" and converts any that swap to a valid preposition in the same target language.
+## Приватность
 
-## Architecture
+- Всё обрабатывается **локально**. Никакие нажатия не уходят в сеть.
+- Обновления проверяются через публичный GitHub Releases — без телеметрии.
+- Буфер клавиш хранит только последнее набираемое слово в оперативке; в полях паролей буфер выключен полностью.
 
-```
-App/Sources/keySwitcher/
-├── main.swift              entry / NSApp setup
-├── AppDelegate.swift       menubar, hotkeys, settings UI lifecycle
-├── EventMonitor.swift      shared CGEventTap + KeystrokeBuffer (with context tracking)
-├── KeyTranslator.swift     UCKeyTranslate wrapper (handles dead keys)
-├── LayoutResolver.swift    reads user's actual keyboard layouts via TIS APIs
-├── LayoutMap.swift         layout swap + autoConvert detector
-├── ContextResolver.swift   reads focused element text via Accessibility
-├── AutoConverter.swift     auto-replacement on word completion + retro chain
-├── ClipboardConverter.swift  selection / last-word conversion via clipboard or buffer
-├── SelectionDetector.swift   AX-based selection detection
-├── HotkeyManager.swift     Carbon RegisterEventHotKey wrapper
-├── InputInjection.swift    centralised CGEvent posting + buffer-mute
-├── InputSourceSwitcher.swift  TISSelectInputSource wrapper
-├── Settings.swift          UserDefaults-backed config
-├── SettingsWindow.swift    SwiftUI settings window with hotkey recorders
-├── Transliteration.swift   GOST 7.79 ru→latin
-├── UpdaterController.swift Sparkle integration
-└── Log.swift               os.Logger setup
-```
+---
 
-Dictionary assets are derived algorithmically from open hunspell dictionaries (LibreOffice ru_RU + en_US) — no copyrighted Punto data shipped.
+## Лицензия
 
-## Privacy
+MIT — свободно использовать, изменять и распространять. Текст — [LICENSE](LICENSE).
 
-- All processing runs locally. Nothing leaves your machine.
-- Update checks query GitHub Releases (public). No telemetry.
-- The keystroke buffer stores only the most recent word in process memory; secure-input fields are skipped.
+---
 
-## License
+## English
 
-MIT — see [LICENSE](LICENSE).
+Smart keyboard layout switcher for macOS on Apple Silicon. Notices when you've typed in the wrong layout (for example `ghbdtn` instead of `привет`), rewrites the word, and switches the system input source so you keep typing in the right layout.
+
+### Features
+
+- **Auto-conversion on the fly** — type a word in the wrong layout, hit space, it fixes itself.
+- **Smart detector** — analyses character statistics; valid words and rare names are left alone.
+- **Context aware** — looks at surrounding words. Single-letter prepositions (`f`, `b`) get fixed too when context demands.
+- **One-tap undo** — if the auto-fix was wrong, press **Option** within 5 seconds to restore the original.
+- **Convert selection** — select already-typed text (mouse, Shift+arrow, or Cmd+A) and press **Option** — only the selection is converted.
+- **Transliteration** (**⌥⇧T**) — Cyrillic → Latin per GOST 7.79: «Иванов» → «Ivanov». Handy for paperwork and forms.
+- **Force swap** (**⌥⇧S**) — bypasses the detector, always swaps the layout of the selection or last word.
+- **Silent auto-updates** — new versions arrive without you visiting the site.
+- **Safe** — the app turns itself off inside password fields.
+
+### Install
+
+1. Download the latest `.dmg` from [Releases](https://github.com/graninilya/keyswitcher/releases/latest).
+2. Open the DMG, drag **Q*Й.app** into **Applications**.
+3. **First launch:** right-click the app → **Open** → confirm the macOS dialog.
+4. Grant **Accessibility** permission: System Settings → Privacy & Security → Accessibility → add Q*Й.
+5. A welcome screen with a quick tour appears. You're set.
+
+All later updates arrive transparently via **"Check for updates…"** in the menu.
+
+### Default hotkeys
+
+| Hotkey | Action |
+|---|---|
+| **left Option** | Convert selection / last word. Pressing again within 5s reverts. |
+| **⌥⇧S** | Force-convert (no detector check). |
+| **⌥⇧T** | Transliterate selection: Cyrillic → Latin. |
+
+Rebind anything in **Settings → Hotkeys**.
+
+### Requirements
+
+- macOS 13.0 (Ventura) or later
+- Apple Silicon (M1/M2/M3/M4)
+
+### Privacy
+
+- Everything runs **locally**. No keystrokes leave your machine.
+- Update checks go through public GitHub Releases — no telemetry.
+- The keystroke buffer keeps only the most recent word in process memory; password fields are skipped entirely.
+
+### License
+
+MIT — free to use, modify, and redistribute. See [LICENSE](LICENSE).
