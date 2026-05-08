@@ -17,6 +17,7 @@
 - **Замена выделенного** — выдели уже набранный кусок (мышкой, Shift+стрелка или Cmd+A) и нажми **Option** — переведёт только выделение.
 - **Транслитерация** (**⌥⇧T**) — кириллица в латиницу по ГОСТ 7.79: «Иванов» → «Ivanov». Удобно для документов и форм.
 - **Принудительный свап** (**⌥⇧S**) — без проверки детектором, всегда меняет раскладку выделения или последнего слова.
+- **Расстановка пунктуации и опечаток через AI** (**правый Option**) — `купил масло хлеб молоко` → `Купил масло, хлеб, молоко.`, `крутяык` → `крутяк`. Бесплатно для всех, включается/отключается в настройках.
 - **Тихие автообновления** — новые версии приходят сами, без походов на сайт.
 - **Безопасно** — приложение отключается само в полях паролей.
 
@@ -39,6 +40,7 @@
 | Хоткей | Действие |
 |---|---|
 | **левый Option** | Сменить раскладку выделения / последнего слова. Повторное нажатие в 5 сек — откат. |
+| **правый Option** | AI-полировка: пунктуация и опечатки. Работает на выделении или текущем параграфе. |
 | **⌥⇧S** | Принудительно сменить раскладку (без проверки). |
 | **⌥⇧T** | Транслитерация выделения: кириллица → латиница. |
 
@@ -67,6 +69,24 @@
 
 ---
 
+## AI-полировка пунктуации и опечаток
+
+Хоткей **правый Option** отправляет текущий параграф (или выделение) в облачную LLM, получает обратно полированный вариант и заменяет источник. Откат — левый Option в 5 секунд.
+
+**Что умеет:**
+- Расставить пунктуацию: `привет как дела сегодня` → `Привет, как дела сегодня?`
+- Перечисление: `купил масло хлеб молоко` → `Купил масло, хлеб, молоко.`
+- Поправить опечатки в сленге: `крутяык` → `крутяк`, `превед` → `Привет`
+- Капитализацию начала предложения
+
+**Как настроить:**
+- В **Настройках → AI** можно выбрать модель (Gemma 3 12B по умолчанию, есть Llama 3.3 70B и др.) или полностью отключить фичу.
+- Не требует регистрации, ключей или подписок — облачная инфраструктура за счёт автора.
+
+**Приватность:** только при нажатии хоткея текущий параграф/выделение отправляется на серверы Cloudflare Workers AI. Без хоткея ничего никуда не уходит.
+
+---
+
 ## Системные требования
 
 - macOS 13.0 (Ventura) или новее
@@ -76,7 +96,8 @@
 
 ## Приватность
 
-- Всё обрабатывается **локально**. Никакие нажатия не уходят в сеть.
+- **Все локальные функции** (детектор раскладок, исключения, транслитерация) обрабатываются на твоём Mac. Никакие нажатия не уходят в сеть.
+- **AI-полировка** — текст уходит на облако только когда сам нажмёшь хоткей. Можно отключить совсем.
 - Обновления проверяются через публичный GitHub Releases — без телеметрии.
 - Буфер клавиш хранит только последнее набираемое слово в оперативке; в полях паролей буфер выключен полностью.
 
@@ -103,6 +124,7 @@ Smart keyboard layout switcher for macOS on Apple Silicon. Notices when you've t
 - **Convert selection** — select already-typed text (mouse, Shift+arrow, or Cmd+A) and press **Option** — only the selection is converted.
 - **Transliteration** (**⌥⇧T**) — Cyrillic → Latin per GOST 7.79: «Иванов» → «Ivanov». Handy for paperwork and forms.
 - **Force swap** (**⌥⇧S**) — bypasses the detector, always swaps the layout of the selection or last word.
+- **AI punctuation & typo polish** (**right Option**) — `купил масло хлеб молоко` → `Купил масло, хлеб, молоко.`, `крутяык` → `крутяк`. Free for everyone, can be disabled in Settings.
 - **Silent auto-updates** — new versions arrive without you visiting the site.
 - **Safe** — the app turns itself off inside password fields.
 
@@ -121,6 +143,7 @@ All later updates arrive transparently via **"Check for updates…"** in the men
 | Hotkey | Action |
 |---|---|
 | **left Option** | Convert selection / last word. Pressing again within 5s reverts. |
+| **right Option** | AI polish: punctuation and typos. Works on selection or the current paragraph. |
 | **⌥⇧S** | Force-convert (no detector check). |
 | **⌥⇧T** | Transliterate selection: Cyrillic → Latin. |
 
@@ -139,6 +162,20 @@ The detector is wrong sometimes (rare slang, surnames, technical terms). Q*Й re
 
 **Why three reverts, not one?** A single accidental revert shouldn't blacklist a word you actually wanted converted. After three the app is sure it's not a fluke.
 
+### AI punctuation & typo polish
+
+Press **right Option** to send the current paragraph (or selection) to a cloud LLM, get back a polished version, and replace the source. Press left Option within 5s to revert.
+
+**What it fixes:**
+- Punctuation: `привет как дела сегодня` → `Привет, как дела сегодня?`
+- Lists: `купил масло хлеб молоко` → `Купил масло, хлеб, молоко.`
+- Slang typos: `крутяык` → `крутяк`, `превед` → `Привет`
+- Sentence capitalization
+
+**Configuration:** in **Settings → AI** you can pick the model (Gemma 3 12B by default, also Llama 3.3 70B and others) or disable the feature entirely. No signup, no API keys, no subscription — the cloud infrastructure is hosted by the author.
+
+**Privacy:** only when you press the hotkey, the current paragraph/selection is sent to Cloudflare Workers AI. Without the hotkey nothing leaves your machine.
+
 ### Requirements
 
 - macOS 13.0 (Ventura) or later
@@ -146,7 +183,8 @@ The detector is wrong sometimes (rare slang, surnames, technical terms). Q*Й re
 
 ### Privacy
 
-- Everything runs **locally**. No keystrokes leave your machine.
+- **All local features** (layout detector, exceptions, transliteration) are processed on your Mac. No keystrokes leave the device.
+- **AI polish** — text is uploaded to the cloud only when you press the hotkey. Can be disabled completely.
 - Update checks go through public GitHub Releases — no telemetry.
 - The keystroke buffer keeps only the most recent word in process memory; password fields are skipped entirely.
 
