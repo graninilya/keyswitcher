@@ -3,7 +3,7 @@
 # Использует hdiutil + AppleScript для красивого layout.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 APP_BUNDLE="App/dist/keySwitcher.app"
 APP_DISPLAY_NAME="Q*Й"
