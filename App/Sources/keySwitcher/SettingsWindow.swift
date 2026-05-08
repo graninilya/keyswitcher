@@ -179,9 +179,18 @@ struct BehaviorTab: View {
                 BehaviorRow(
                     icon: "speaker.wave.2",
                     title: "Звуковой сигнал на замену",
-                    subtitle: "Короткий тик когда сработала автоконвертация"
+                    subtitle: "Короткий тик после авто-замены или хоткея"
                 ) {
-                    Toggle("", isOn: $settings.soundsEnabled).labelsHidden()
+                    Picker("", selection: $settings.soundName) {
+                        Text("Без звука").tag("")
+                        Divider()
+                        ForEach(SoundFeedback.allSounds, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 140)
                 }
                 BehaviorRow(
                     icon: "power",

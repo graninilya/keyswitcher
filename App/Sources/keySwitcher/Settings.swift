@@ -106,8 +106,11 @@ final class Settings: ObservableObject {
     @Published var hotkeys: HotkeyConfig {
         didSet { save() }
     }
-    @Published var soundsEnabled: Bool {
-        didSet { UserDefaults.standard.set(soundsEnabled, forKey: "soundsEnabled") }
+    @Published var soundName: String {
+        didSet {
+            UserDefaults.standard.set(soundName, forKey: "soundName")
+            SoundFeedback.preview()
+        }
     }
     @Published var enabled: Bool {
         didSet { UserDefaults.standard.set(enabled, forKey: "enabled") }
@@ -148,7 +151,13 @@ final class Settings: ObservableObject {
         } else {
             self.hotkeys = HotkeyConfig.default
         }
-        self.soundsEnabled = d.object(forKey: "soundsEnabled") as? Bool ?? false
+        if let stored = d.string(forKey: "soundName") {
+            self.soundName = stored
+        } else if (d.object(forKey: "soundsEnabled") as? Bool) == true {
+            self.soundName = "Tink"
+        } else {
+            self.soundName = ""
+        }
         self.enabled = d.object(forKey: "enabled") as? Bool ?? true
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         let stored = (d.array(forKey: "ignoredAutoSwap") as? [String]) ?? []

@@ -199,5 +199,6 @@ final class AutoConverter {
 
     private func typeUnicode(_ text: String) {
         InputInjection.shared.typeUnicode(text)
+        SoundFeedback.play()
     }
 }

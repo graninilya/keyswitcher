@@ -242,6 +242,7 @@ final class ClipboardConverter {
 
     private func typeUnicode(_ text: String) {
         InputInjection.shared.typeUnicode(text)
+        SoundFeedback.play()
     }
 
     private func backupPasteboard(_ pb: NSPasteboard) -> [(NSPasteboard.PasteboardType, Data)] {

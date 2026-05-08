@@ -18,6 +18,7 @@
 - **Транслитерация** (**⌥⇧T**) — кириллица в латиницу по ГОСТ 7.79: «Иванов» → «Ivanov». Удобно для документов и форм.
 - **Принудительный свап** (**⌥⇧S**) — без проверки детектором, всегда меняет раскладку выделения или последнего слова.
 - **Расстановка пунктуации и опечаток через AI** (**правый Option**) — `купил масло хлеб молоко` → `Купил масло, хлеб, молоко.`, `крутяык` → `крутяк`. Бесплатно для всех, включается/отключается в настройках.
+- **Звук на замену** — выбор из 14 системных звуков macOS, по умолчанию без звука.
 - **Тихие автообновления** — новые версии приходят сами, без походов на сайт.
 - **Безопасно** — приложение отключается само в полях паролей.
 
@@ -125,6 +126,7 @@ Smart keyboard layout switcher for macOS on Apple Silicon. Notices when you've t
 - **Transliteration** (**⌥⇧T**) — Cyrillic → Latin per GOST 7.79: «Иванов» → «Ivanov». Handy for paperwork and forms.
 - **Force swap** (**⌥⇧S**) — bypasses the detector, always swaps the layout of the selection or last word.
 - **AI punctuation & typo polish** (**right Option**) — `купил масло хлеб молоко` → `Купил масло, хлеб, молоко.`, `крутяык` → `крутяк`. Free for everyone, can be disabled in Settings.
+- **Replacement sound** — pick from 14 system macOS sounds, off by default.
 - **Silent auto-updates** — new versions arrive without you visiting the site.
 - **Safe** — the app turns itself off inside password fields.
 
