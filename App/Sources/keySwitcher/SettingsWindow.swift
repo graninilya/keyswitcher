@@ -25,7 +25,7 @@ final class SettingsWindowController {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
-        w.setContentSize(NSSize(width: 560, height: 520))
+        w.setContentSize(NSSize(width: 640, height: 540))
         w.center()
         w.isReleasedWhenClosed = false
         self.window = w
@@ -36,7 +36,7 @@ final class SettingsWindowController {
 
 
 enum SettingsTab: Hashable {
-    case hotkeys, behavior, ai, exceptions, updates, about
+    case hotkeys, behavior, ai, exceptions, rules, updates, about
 }
 
 /// Класс-обёртка чтобы SettingsWindowController мог менять выбранный таб извне.
@@ -69,6 +69,9 @@ struct SettingsRoot: View {
                 ExceptionsTab()
                     .tabItem { Label("Исключения", systemImage: "list.bullet.rectangle") }
                     .tag(SettingsTab.exceptions)
+                RulesTab()
+                    .tabItem { Label("Правила", systemImage: "checklist") }
+                    .tag(SettingsTab.rules)
                 UpdatesTab()
                     .tabItem { Label("Обновления", systemImage: "arrow.down.circle") }
                     .tag(SettingsTab.updates)
@@ -78,7 +81,7 @@ struct SettingsRoot: View {
             }
             .padding(.top, 8)
         }
-        .frame(width: 560, height: 520)
+        .frame(width: 640, height: 540)
     }
 }
 
@@ -440,6 +443,135 @@ struct ExceptionsTab: View {
         let trimmed = newWord.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         settings.addIgnored(trimmed)
+        newWord = ""
+    }
+}
+
+// MARK: - Правила (всегда свапать)
+
+struct RulesTab: View {
+    @ObservedObject private var settings = Settings.shared
+    @State private var newWord: String = ""
+
+    private var sortedCustom: [String] {
+        settings.forceSwapWords.sorted()
+    }
+
+    private var sortedBuiltIn: [String] {
+        LayoutMap.builtInForceSwap.sorted()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Слова которые Q*Й всегда свапает автоматически")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Аббревиатуры без гласных (vpn, sql, dns) детектор не может уверенно различить — список говорит «всегда конвертируй». Печатаешь `мзт` в русской раскладке → получаешь `vpn`.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            HStack {
+                TextField("например: k8s, pgsql, mqtt", text: $newWord)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addWord)
+                Button("Добавить", action: addWord)
+                    .disabled(newWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !sortedCustom.isEmpty {
+                        HStack {
+                            Text("Свои")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .tracking(0.4)
+                            Spacer()
+                        }
+                        .padding(.top, 6)
+                        .padding(.bottom, 4)
+                        .padding(.horizontal, 20)
+
+                        ForEach(sortedCustom, id: \.self) { word in
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                                    .font(.system(size: 12))
+                                Text(word)
+                                    .font(.system(size: 13, design: .monospaced))
+                                Spacer()
+                                Button {
+                                    settings.removeForceSwap(word)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 14))
+                                }
+                                .buttonStyle(.plain)
+                                .help("Удалить из правил")
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 20)
+                            Divider().opacity(0.4)
+                        }
+                    }
+
+                    HStack {
+                        Text("Встроенные")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .tracking(0.4)
+                        Spacer()
+                    }
+                    .padding(.top, sortedCustom.isEmpty ? 6 : 14)
+                    .padding(.bottom, 4)
+                    .padding(.horizontal, 20)
+
+                    ForEach(sortedBuiltIn, id: \.self) { word in
+                        HStack {
+                            Image(systemName: "lock.fill")
+                                .foregroundColor(.secondary.opacity(0.6))
+                                .font(.system(size: 11))
+                            Text(word)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 20)
+                        Divider().opacity(0.3)
+                    }
+                }
+            }
+
+            HStack {
+                Text("Своих: \(sortedCustom.count) · встроенных: \(sortedBuiltIn.count)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if !sortedCustom.isEmpty {
+                    Button("Очистить свои") {
+                        settings.forceSwapWords.removeAll()
+                    }
+                    .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+    }
+
+    private func addWord() {
+        let trimmed = newWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        settings.addForceSwap(trimmed)
         newWord = ""
     }
 }

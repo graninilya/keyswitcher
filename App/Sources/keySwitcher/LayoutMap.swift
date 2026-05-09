@@ -3,6 +3,19 @@ import Foundation
 final class LayoutMap {
     static let shared = LayoutMap()
 
+    /// Аббревиатуры без гласных или иначе нечитаемые в обеих раскладках —
+    /// триграммы не вытягивают разницу, нужно решать списком.
+    static let builtInForceSwap: Set<String> = [
+        "http", "https", "url", "uri", "api", "rest", "json", "xml", "yaml",
+        "csv", "html", "css", "sdk", "cli", "gui", "ide", "ssh", "ftp", "sftp",
+        "tcp", "udp", "ip", "dns", "dhcp", "vpn", "ssl", "tls", "smtp", "imap",
+        "jwt", "cors", "sql", "nosql", "orm", "git", "npm", "yarn", "pnpm",
+        "k8s", "aws", "gcp", "ci", "cd", "kpi", "crm", "erp", "smm", "seo",
+        "mvp", "cpu", "gpu", "ram", "rom", "ssd", "hdd", "usb", "hdmi",
+        "pdf", "mp3", "mp4", "gif", "png", "jpg", "jpeg", "svg", "tiff",
+        "ddos", "iot", "llm", "gpt", "ml",
+    ]
+
     private let enToRu: [Character: Character]
     private let ruToEn: [Character: Character]
     private var wordsRu: Set<String>
@@ -184,8 +197,21 @@ final class LayoutMap {
         if isLatin && wordsEn.contains(lower) { return nil }
         if isCyrillic && wordsRu.contains(lower) { return nil }
 
+        // Список «всегда свапать» работает в обе стороны:
+        // ввод совпал — не трогаем (`tls` остаётся `tls`, не превращается в `еды`);
+        // совпал результат свапа — конвертим (`еды` ← `tls` остаётся `еды`,
+        // но `мзт` → `vpn` срабатывает).
+        let userForce = Settings.shared.forceSwapWords
+        if isLatin && (LayoutMap.builtInForceSwap.contains(lower) || userForce.contains(lower)) {
+            return nil
+        }
+
         let candidate = swap(word)
         let candidateLower = candidate.lowercased()
+
+        if LayoutMap.builtInForceSwap.contains(candidateLower) || userForce.contains(candidateLower) {
+            return candidate
+        }
 
         // Сравнительный триграммный фильтр: «куда лучше укладывается слово».
         // - буквы (ru=-13) vs ,erds (en=-15.5)         → ru лучше → keep

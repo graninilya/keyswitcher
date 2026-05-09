@@ -123,6 +123,11 @@ final class Settings: ObservableObject {
             UserDefaults.standard.set(Array(ignoredAutoSwap), forKey: "ignoredAutoSwap")
         }
     }
+    @Published var forceSwapWords: Set<String> {
+        didSet {
+            UserDefaults.standard.set(Array(forceSwapWords), forKey: "forceSwapWords")
+        }
+    }
     @Published var pendingReverts: [String: Int] {
         didSet {
             UserDefaults.standard.set(pendingReverts, forKey: "pendingReverts")
@@ -177,6 +182,8 @@ final class Settings: ObservableObject {
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         let stored = (d.array(forKey: "ignoredAutoSwap") as? [String]) ?? []
         self.ignoredAutoSwap = Set(stored.map { $0.lowercased() })
+        let storedForce = (d.array(forKey: "forceSwapWords") as? [String]) ?? []
+        self.forceSwapWords = Set(storedForce.map { $0.lowercased() })
         self.pendingReverts = (d.dictionary(forKey: "pendingReverts") as? [String: Int]) ?? [:]
         self.aiWorkerURL = d.string(forKey: "aiWorkerURL") ?? Settings.defaultWorkerURL
         self.aiModel = d.string(forKey: "aiModel") ?? Settings.defaultAIModel
@@ -193,10 +200,23 @@ final class Settings: ObservableObject {
             ignoredAutoSwap.insert(key)
         }
         pendingReverts.removeValue(forKey: key)
+        forceSwapWords.remove(key)
     }
 
     func removeIgnored(_ word: String) {
         ignoredAutoSwap.remove(word.lowercased())
+    }
+
+    func addForceSwap(_ word: String) {
+        let key = word.lowercased()
+        guard !key.isEmpty else { return }
+        forceSwapWords.insert(key)
+        ignoredAutoSwap.remove(key)
+        pendingReverts.removeValue(forKey: key)
+    }
+
+    func removeForceSwap(_ word: String) {
+        forceSwapWords.remove(word.lowercased())
     }
 
     @discardableResult
