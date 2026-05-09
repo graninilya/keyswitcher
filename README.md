@@ -14,6 +14,7 @@
 - **Умный детектор** — анализирует распределение символов, не трогает валидные слова и редкие имена.
 - **Контекст** — смотрит на соседние слова. Одиночные буквы-предлоги (`f`, `b`) тоже исправляются если контекст это требует.
 - **Откат в одно нажатие** — если автозамена ошиблась, нажми **Option** в течение 5 секунд и текст вернётся как был.
+- **Ретро-цепочка** — если печатал серию слов в неправильной раскладке, Q*Й свапнёт не только текущее, но и предыдущие короткие слова (`ye lfdfq` → `ну давай`).
 - **Замена выделенного** — выдели уже набранный кусок (мышкой, Shift+стрелка или Cmd+A) и нажми **Option** — переведёт только выделение.
 - **Транслитерация** (**⌥⇧T**) — кириллица в латиницу по ГОСТ 7.79: «Иванов» → «Ivanov». Удобно для документов и форм.
 - **Принудительный свап** (**⌥⇧S**) — без проверки детектором, всегда меняет раскладку выделения или последнего слова.
@@ -125,6 +126,7 @@ Smart keyboard layout switcher for macOS on Apple Silicon. Notices when you've t
 - **Smart detector** — analyses character statistics; valid words and rare names are left alone.
 - **Context aware** — looks at surrounding words. Single-letter prepositions (`f`, `b`) get fixed too when context demands.
 - **One-tap undo** — if the auto-fix was wrong, press **Option** within 5 seconds to restore the original.
+- **Retroactive chain** — when typing a series of words in the wrong layout, Q*Й converts not just the current word but also walks back and fixes preceding short ones (`ye lfdfq` → `ну давай`).
 - **Convert selection** — select already-typed text (mouse, Shift+arrow, or Cmd+A) and press **Option** — only the selection is converted.
 - **Transliteration** (**⌥⇧T**) — Cyrillic → Latin per GOST 7.79: «Иванов» → «Ivanov». Handy for paperwork and forms.
 - **Force swap** (**⌥⇧S**) — bypasses the detector, always swaps the layout of the selection or last word.

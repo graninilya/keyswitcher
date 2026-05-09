@@ -81,6 +81,31 @@ final class LayoutMap {
 
     /// Преобразует строку как если бы её набрали на другой раскладке.
     /// При смешанной строке кириллица побеждает (нормализуем к ней).
+    func isValidRussian(_ word: String) -> Bool {
+        wordsRu.contains(word.lowercased())
+    }
+
+    func isValidEnglish(_ word: String) -> Bool {
+        wordsEn.contains(word.lowercased())
+    }
+
+    /// True если swap слова в целевой язык сильно убедительнее по триграммам.
+    /// Используется ретро-цепочкой для отсева ложноположительных типа `ok` → `ок`.
+    func swapIsMuchBetter(_ word: String, targetCyrillic: Bool, margin: Double = 1.5) -> Bool {
+        let swap = self.swap(word).lowercased()
+        let original = word.lowercased()
+        let originalScore: Double
+        let swapScore: Double
+        if targetCyrillic {
+            originalScore = trigramPlausibility(original, table: trigramsEn)
+            swapScore = trigramPlausibility(swap, table: trigramsRu)
+        } else {
+            originalScore = trigramPlausibility(original, table: trigramsRu)
+            swapScore = trigramPlausibility(swap, table: trigramsEn)
+        }
+        return swapScore > originalScore + margin
+    }
+
     func swap(_ s: String) -> String {
         let cyrLetters = s.filter(isCyrillicLetter).count
         let latLetters = s.filter(isLatinLetter).count
@@ -194,24 +219,25 @@ final class LayoutMap {
             return nil
         }
 
-        if isLatin && wordsEn.contains(lower) { return nil }
-        if isCyrillic && wordsRu.contains(lower) { return nil }
-
-        // Список «всегда свапать» работает в обе стороны:
-        // ввод совпал — не трогаем (`tls` остаётся `tls`, не превращается в `еды`);
-        // совпал результат свапа — конвертим (`еды` ← `tls` остаётся `еды`,
-        // но `мзт` → `vpn` срабатывает).
+        // Force-swap проверки идут ДО словарей: иначе `ye` (валидное в EN dict)
+        // никогда не свапнётся в `не`, даже если юзер явно добавил `не` в Правила.
+        // Семантика Правил — «всегда свапать», она должна перебивать словарь.
         let userForce = Settings.shared.forceSwapWords
-        if isLatin && (LayoutMap.builtInForceSwap.contains(lower) || userForce.contains(lower)) {
-            return nil
-        }
-
         let candidate = swap(word)
         let candidateLower = candidate.lowercased()
 
         if LayoutMap.builtInForceSwap.contains(candidateLower) || userForce.contains(candidateLower) {
             return candidate
         }
+
+        // Список «всегда свапать» работает и в обратную сторону:
+        // ввод совпал — не трогаем (`tls` остаётся `tls`, не превращается в `еды`).
+        if isLatin && (LayoutMap.builtInForceSwap.contains(lower) || userForce.contains(lower)) {
+            return nil
+        }
+
+        if isLatin && wordsEn.contains(lower) { return nil }
+        if isCyrillic && wordsRu.contains(lower) { return nil }
 
         // Сравнительный триграммный фильтр: «куда лучше укладывается слово».
         // - буквы (ru=-13) vs ,erds (en=-15.5)         → ru лучше → keep

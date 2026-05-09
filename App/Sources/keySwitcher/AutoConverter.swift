@@ -124,24 +124,64 @@ final class AutoConverter {
         var i = history.count - 2
         while i >= 0 {
             let prev = history[i]
-            guard prev.count == 1 else { break }
             let prevLow = prev.lowercased()
-            if isCyrConv && validRu.contains(prevLow) { break }
-            if isLatConv && validEn.contains(prevLow) { break }
+
+            if prev.count == 1 {
+                if isCyrConv && validRu.contains(prevLow) { break }
+                if isLatConv && validEn.contains(prevLow) { break }
+
+                let prevSwap = LayoutMap.shared.swap(prev)
+                guard let firstSwap = prevSwap.first else { break }
+                let swapIsCyrLetter = ("а"..."я").contains(firstSwap) || firstSwap == "ё"
+                                    || ("А"..."Я").contains(firstSwap) || firstSwap == "Ё"
+                let swapIsLatLetter = ("a"..."z").contains(firstSwap) || ("A"..."Z").contains(firstSwap)
+
+                let valid = (isCyrConv && swapIsCyrLetter) || (isLatConv && swapIsLatLetter)
+                if valid && prevSwap != prev {
+                    chain.append((prev, prevSwap))
+                    i -= 1
+                } else {
+                    break
+                }
+                continue
+            }
+
+            // Multi-letter retro: подхватываем `ye` → `ну`, `et` → `не`,
+            // если их свап — реальное слово в целевом языке. Текущее
+            // слово уже конвертилось → юзер давно в неправильной раскладке.
+            let isPrevLat = prevLow.allSatisfy { ("a"..."z").contains($0) }
+            let isPrevCyr = prevLow.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" }
+            guard isPrevLat || isPrevCyr else { break }
+            // Идём назад только пока направление совпадает с текущим свапом.
+            if isCyrConv && !isPrevLat { break }
+            if isLatConv && !isPrevCyr { break }
 
             let prevSwap = LayoutMap.shared.swap(prev)
-            guard let firstSwap = prevSwap.first else { break }
-            let swapIsCyrLetter = ("а"..."я").contains(firstSwap) || firstSwap == "ё"
-                                || ("А"..."Я").contains(firstSwap) || firstSwap == "Ё"
-            let swapIsLatLetter = ("a"..."z").contains(firstSwap) || ("A"..."Z").contains(firstSwap)
+            let prevSwapLow = prevSwap.lowercased()
+            guard prevSwap != prev else { break }
 
-            let valid = (isCyrConv && swapIsCyrLetter) || (isLatConv && swapIsLatLetter)
-            if valid && prevSwap != prev {
-                chain.append((prev, prevSwap))
-                i -= 1
+            let userForce = Settings.shared.forceSwapWords
+            let isInRules = LayoutMap.builtInForceSwap.contains(prevSwapLow)
+                         || userForce.contains(prevSwapLow)
+
+            let swapIsValid: Bool
+            if isCyrConv {
+                swapIsValid = LayoutMap.shared.isValidRussian(prevSwapLow)
             } else {
-                break
+                swapIsValid = LayoutMap.shared.isValidEnglish(prevSwapLow)
             }
+
+            // Сам факт что текущее слово сконвертилось — сильный сигнал
+            // wrong-layout серии. Достаточно чтобы swap был валидным словом
+            // целевого языка ИЛИ слово было в Правилах. Триграммный гард
+            // не сработал на 2-буквенных (триграмм нет → штраф съедает
+            // разницу), а контекст в буфере отражает сырой ввод который
+            // ещё латиница.
+            let triggerSwap = isInRules || swapIsValid
+            guard triggerSwap else { break }
+
+            chain.append((prev, prevSwap))
+            i -= 1
         }
         return chain.reversed()
     }
