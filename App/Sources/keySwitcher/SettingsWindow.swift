@@ -466,7 +466,7 @@ struct RulesTab: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Слова которые Q*Й всегда свапает автоматически")
                     .font(.system(size: 13, weight: .medium))
-                Text("Аббревиатуры без гласных (vpn, sql, dns) детектор не может уверенно различить — список говорит «всегда конвертируй». Печатаешь `мзт` в русской раскладке → получаешь `vpn`.")
+                Text("Аббревиатуры без гласных (vpn, sql, dns) детектор не может уверенно различить — список говорит «всегда конвертируй». Можно добавлять и латинский результат (`vpn`, `pgsql`), и саму русскую «галиматью» (`мзт`, `юифе`) — оба варианта работают.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

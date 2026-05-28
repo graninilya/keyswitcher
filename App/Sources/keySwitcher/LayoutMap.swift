@@ -106,24 +106,54 @@ final class LayoutMap {
         return swapScore > originalScore + margin
     }
 
+    /// Знаки которые одинаковы в обеих раскладках по смыслу — не маппим даже если
+    /// физически на разных клавишах (`,`/`Б`, `.`/`Ю`, RU `.`/`/`). Иначе
+    /// `Hello,` → `РуддщБ` вместо `Руддщ,`.
+    private static let semanticPunct: Set<Character> = [
+        ".", ",", "!", "?", ":", ";",
+        "(", ")", "{", "}",
+        "\"", "«", "»", "—", "–", "…",
+    ]
+
+
+    /// Свап одного триггера-символа в указанном направлении. Используется когда
+    /// слово сконвертилось EN→RU/RU→EN и trigger (нажатая клавиша-разделитель)
+    /// тоже промахнулся раскладкой: `Ghbdtn&` → `Привет` + `&`, а ожидание `.`
+    /// (Shift+7 в RU PC). Semantic-знаки (`.`, `,`, `!`, `?`) проходят
+    /// насквозь — они одинаковы в обеих раскладках.
+    func swapChar(_ ch: Character, toCyrillic: Bool) -> Character {
+        if Self.semanticPunct.contains(ch) { return ch }
+        let table = toCyrillic ? enToRu : ruToEn
+        return table[ch] ?? ch
+    }
+
     func swap(_ s: String) -> String {
         let cyrLetters = s.filter(isCyrillicLetter).count
         let latLetters = s.filter(isLatinLetter).count
         let hasEnLayoutPunct = s.contains { ch in
             guard !isLatinLetter(ch), !isCyrillicLetter(ch) else { return false }
+            guard !Self.semanticPunct.contains(ch) else { return false }
             guard let mapped = enToRu[ch] else { return false }
             return isCyrillicLetter(mapped)
         }
 
+        func mapChar(_ c: Character, table: [Character: Character]) -> Character {
+            if Self.semanticPunct.contains(c) { return c }
+            return table[c] ?? c
+        }
+
         if cyrLetters > 0 && (latLetters > 0 || hasEnLayoutPunct) {
-            return String(s.map { enToRu[$0] ?? $0 })
+            return String(s.map { mapChar($0, table: enToRu) })
         }
 
         if cyrLetters > 0 {
-            return String(s.map { ruToEn[$0] ?? $0 })
+            return String(s.map { mapChar($0, table: ruToEn) })
         }
 
-        return String(s.map { enToRu[$0] ?? ruToEn[$0] ?? $0 })
+        return String(s.map { ch -> Character in
+            if Self.semanticPunct.contains(ch) { return ch }
+            return enToRu[ch] ?? ruToEn[ch] ?? ch
+        })
     }
 
     private func isLatinLetter(_ c: Character) -> Bool {
@@ -227,6 +257,13 @@ final class LayoutMap {
         let candidateLower = candidate.lowercased()
 
         if LayoutMap.builtInForceSwap.contains(candidateLower) || userForce.contains(candidateLower) {
+            return candidate
+        }
+
+        // Юзер мог добавить в Правила сам ввод (`юифе`) вместо результата
+        // свапа (`.bat`) — нет интуитивного способа знать что получится.
+        // Матчим cyrillic-input против userForce → свапаем.
+        if isCyrillic && userForce.contains(lower) {
             return candidate
         }
 

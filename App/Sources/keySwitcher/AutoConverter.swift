@@ -79,8 +79,15 @@ final class AutoConverter {
             history: buffer.historySnapshot, currentConverted: converted
         )
 
+        // Trigger тоже маппим в раскладку результата: `Ghbdtn&` (где `&` это
+        // Shift+7 в EN) → `Привет` + остаётся `&`. Хотя юзер хотел `.` (Shift+7
+        // в RU PC). swapChar делает enToRu или ruToEn в зависимости от target.
+        let convertedIsCyrillic = converted.lowercased().contains { ("а"..."я").contains($0) || $0 == "ё" }
+        let mappedTrigger = LayoutMap.shared.swapChar(trigger, toCyrillic: convertedIsCyrillic)
+        let tailString = String(mappedTrigger)
+
         let replacement = Replacement(
-            original: word, converted: converted, tail: String(trigger),
+            original: word, converted: converted, tail: tailString,
             originalLayout: savedLayout, state: .original,
             isAutomatic: true
         )
@@ -93,7 +100,7 @@ final class AutoConverter {
             let prevDelete = retroChain.reduce(0) { $0 + $1.orig.count + 1 }
             let toDelete = prevDelete + word.count + 1
             let prefix = retroChain.map { $0.conv }.joined(separator: " ")
-            let toType = prefix + " " + converted + String(trigger)
+            let toType = prefix + " " + converted + tailString
             sendBackspaces(toDelete)
             typeUnicode(toType)
             if let lang = converted.inputLanguageForLayout {
