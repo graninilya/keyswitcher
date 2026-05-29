@@ -211,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if text.contains(" ") || text.contains("\n") {
                 if let multi = Self.convertMultiWord(text) { return multi }
             }
-            let candidate = LayoutMap.shared.swap(text)
+            let candidate = LayoutMap.shared.swap(text, preservePunct: true)
             return candidate != text ? candidate : nil
         }
     }
@@ -230,7 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let core = String(word.prefix(word.count - trailCount))
             let trail = String(word.suffix(trailCount))
             guard !core.isEmpty else { return word }
-            let swapped = LayoutMap.shared.swap(core)
+            let swapped = LayoutMap.shared.swap(core, preservePunct: true)
             return swapped + trail
         }
 
@@ -261,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func forceSwap() {
         logHotkey("forceSwap")
-        converter.convertSelectionOnly { LayoutMap.shared.swap($0) }
+        converter.convertSelectionOnly { LayoutMap.shared.swap($0, preservePunct: true) }
     }
 
     @objc private func transliterate() {

@@ -127,18 +127,23 @@ final class LayoutMap {
         return table[ch] ?? ch
     }
 
-    func swap(_ s: String) -> String {
+    /// preservePunct=true: `.` `,` `!` `?` `:` `;` (и парные кавычки/скобки)
+    /// проходят насквозь — для ручного свапа выделения, где `Hello,` → `Привет,`.
+    /// preservePunct=false (default): мапим всё включая `,` `.` `;` — для авто-
+    /// конверта, где `j,yfhe;bk` (с `,` и `;` как «букв» в неправильной раскладке)
+    /// должен стать `обнаружил`.
+    func swap(_ s: String, preservePunct: Bool = false) -> String {
         let cyrLetters = s.filter(isCyrillicLetter).count
         let latLetters = s.filter(isLatinLetter).count
         let hasEnLayoutPunct = s.contains { ch in
             guard !isLatinLetter(ch), !isCyrillicLetter(ch) else { return false }
-            guard !Self.semanticPunct.contains(ch) else { return false }
+            if preservePunct, Self.semanticPunct.contains(ch) { return false }
             guard let mapped = enToRu[ch] else { return false }
             return isCyrillicLetter(mapped)
         }
 
         func mapChar(_ c: Character, table: [Character: Character]) -> Character {
-            if Self.semanticPunct.contains(c) { return c }
+            if preservePunct, Self.semanticPunct.contains(c) { return c }
             return table[c] ?? c
         }
 
@@ -151,7 +156,7 @@ final class LayoutMap {
         }
 
         return String(s.map { ch -> Character in
-            if Self.semanticPunct.contains(ch) { return ch }
+            if preservePunct, Self.semanticPunct.contains(ch) { return ch }
             return enToRu[ch] ?? ruToEn[ch] ?? ch
         })
     }
