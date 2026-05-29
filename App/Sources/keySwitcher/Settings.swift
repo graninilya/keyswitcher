@@ -133,7 +133,13 @@ final class Settings: ObservableObject {
             UserDefaults.standard.set(pendingReverts, forKey: "pendingReverts")
         }
     }
+    @Published var pendingForceSwap: [String: Int] {
+        didSet {
+            UserDefaults.standard.set(pendingForceSwap, forKey: "pendingForceSwap")
+        }
+    }
     let revertThreshold: Int = 3
+    let forceSwapPromoteThreshold: Int = 3
 
     @Published var aiWorkerURL: String {
         didSet { UserDefaults.standard.set(aiWorkerURL, forKey: "aiWorkerURL") }
@@ -185,6 +191,7 @@ final class Settings: ObservableObject {
         let storedForce = (d.array(forKey: "forceSwapWords") as? [String]) ?? []
         self.forceSwapWords = Set(storedForce.map { $0.lowercased() })
         self.pendingReverts = (d.dictionary(forKey: "pendingReverts") as? [String: Int]) ?? [:]
+        self.pendingForceSwap = (d.dictionary(forKey: "pendingForceSwap") as? [String: Int]) ?? [:]
         self.aiWorkerURL = d.string(forKey: "aiWorkerURL") ?? Settings.defaultWorkerURL
         self.aiModel = d.string(forKey: "aiModel") ?? Settings.defaultAIModel
         self.aiEnabled = d.object(forKey: "aiEnabled") as? Bool ?? true
@@ -217,6 +224,27 @@ final class Settings: ObservableObject {
 
     func removeForceSwap(_ word: String) {
         forceSwapWords.remove(word.lowercased())
+    }
+
+    /// Возвращает (count, promoted). promoted=true когда дошло до порога —
+    /// caller показывает уведомление.
+    func recordManualSwap(_ word: String) -> (count: Int, promoted: Bool) {
+        let key = word.lowercased()
+        guard !key.isEmpty else { return (0, false) }
+        if forceSwapWords.contains(key) { return (0, false) }
+        if LayoutMap.builtInForceSwap.contains(key) { return (0, false) }
+        if ignoredAutoSwap.contains(key) { return (0, false) }
+        let next = (pendingForceSwap[key] ?? 0) + 1
+        if next >= forceSwapPromoteThreshold {
+            pendingForceSwap.removeValue(forKey: key)
+            return (next, true)
+        }
+        pendingForceSwap[key] = next
+        return (next, false)
+    }
+
+    func dismissForceSwapCandidate(_ word: String) {
+        pendingForceSwap.removeValue(forKey: word.lowercased())
     }
 
     @discardableResult

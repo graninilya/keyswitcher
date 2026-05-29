@@ -209,9 +209,24 @@ final class ClipboardConverter {
             AutoConverter.shared.record(
                 original: original, converted: new, tail: "", originalLayout: savedLayout
             )
+            Self.maybePromoteToRule(original: original, converted: new)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.restorePasteboard(pasteboard, items: savedItems)
             }
+        }
+    }
+
+    /// Считаем single-word ручные свапы — после порога предлагаем добавить в Правила.
+    /// Multi-word / выделения с пробелами не учитываем (там разумнее не лезть).
+    static func maybePromoteToRule(original: String, converted: String) {
+        let trimmed = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains(" "), !trimmed.contains("\n"), !trimmed.contains("\t"),
+              trimmed.count >= 2 else { return }
+        let (count, promoted) = Settings.shared.recordManualSwap(trimmed)
+        Log.clipboard.info("manual swap: '\(trimmed, privacy: .public)' count=\(count) promoted=\(promoted)")
+        if promoted {
+            RulePromoter.propose(original: trimmed, converted: converted)
         }
     }
 
@@ -254,6 +269,7 @@ final class ClipboardConverter {
         AutoConverter.shared.record(
             original: word, converted: converted, tail: tail, originalLayout: savedLayout
         )
+        Self.maybePromoteToRule(original: word, converted: converted)
 
         buffer.clear()
     }
