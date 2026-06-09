@@ -4,6 +4,7 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem!
+    private var statusVisibilityObserver: NSObjectProtocol?
     private var hotkeys: HotkeyManager!
     private var modifierMonitor: ModifierHotkeyMonitor!
     private var converter: ClipboardConverter!
@@ -15,12 +16,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys = HotkeyManager()
         modifierMonitor = ModifierHotkeyMonitor()
 
-        setupMenuBar()
+        applyStatusIconVisibility()
+        statusVisibilityObserver = NotificationCenter.default.addObserver(
+            forName: .qkbStatusIconVisibilityChanged, object: nil, queue: .main
+        ) { [weak self] _ in self?.applyStatusIconVisibility() }
+
         _ = UpdaterController.shared
 
         if OnboardingWindowController.shouldShow {
             // Первый запуск — показать наглядное вступление до запроса AX.
             OnboardingWindowController.shared.show()
+        } else if settings.hideStatusIcon {
+            // Иконка скрыта — единственный способ войти в настройки, кроме
+            // переоткрытия .app — показать окно сразу при старте.
+            SettingsWindowController.shared.show()
+            ensureAccessibility()
         } else {
             ensureAccessibility()
         }
@@ -38,7 +48,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .store(in: &cancellables)
     }
 
+    /// Юзер открыл .app повторно (двойной клик из Applications, Spotlight) —
+    /// показываем настройки. Особенно важно когда иконка в menu bar скрыта:
+    /// это единственный способ вернуться.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            SettingsWindowController.shared.show()
+        }
+        return true
+    }
+
+    private func applyStatusIconVisibility() {
+        if settings.hideStatusIcon {
+            removeMenuBar()
+        } else {
+            setupMenuBar()
+        }
+    }
+
+    private func removeMenuBar() {
+        guard let item = statusItem else { return }
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+    }
+
     private func setupMenuBar() {
+        guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             // Страховка на случай отсутствия иконки в бандле
@@ -115,28 +150,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateStatusIcon(enabled: Bool? = nil) {
-        guard let button = statusItem.button else { return }
+        guard let item = statusItem, let button = item.button else { return }
         let isOn = enabled ?? settings.enabled
 
-        if let menu = statusItem.menu, let toggleItem = menu.items.first {
+        if let menu = item.menu, let toggleItem = menu.items.first {
             toggleItem.state = isOn ? .on : .off
         }
 
-        let image: NSImage?
-        if let url = Bundle.main.url(forResource: "StatusIcon", withExtension: "pdf") {
-            image = NSImage(contentsOf: url)
-        } else if let url = Bundle.main.url(forResource: "StatusIcon", withExtension: "png") {
-            image = NSImage(contentsOf: url)
-        } else {
-            image = nil
-        }
-
-        if let image = image {
-            let targetH: CGFloat = 22
-            let aspect = image.size.width / image.size.height
-            image.size = NSSize(width: round(targetH * aspect), height: targetH)
-            // Template image — macOS сама инвертирует под текущую тему меню-бара
-            image.isTemplate = true
+        if let image = Self.loadStatusBarIcon() {
             button.image = image
             button.imagePosition = .imageOnly
             button.title = ""
@@ -146,6 +167,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.title = isOn ? "Q*Й" : "Q*Й off"
             button.contentTintColor = isOn ? nil : .tertiaryLabelColor
         }
+    }
+
+    /// PDF в наших ресурсах — растр в обёртке (JPX), мылит на retina. Собираем
+    /// NSImage из PNG @1x/@2x/@3x — macOS выберет нужный rep по плотности экрана.
+    private static func loadStatusBarIcon() -> NSImage? {
+        let pointSize = NSSize(width: 20, height: 22)
+        let image = NSImage(size: pointSize)
+        var anyLoaded = false
+        for suffix in ["", "@2x", "@3x"] {
+            guard let url = Bundle.main.url(forResource: "StatusIcon\(suffix)",
+                                             withExtension: "png") else { continue }
+            guard let data = try? Data(contentsOf: url),
+                  let rep = NSBitmapImageRep(data: data) else { continue }
+            rep.size = pointSize
+            image.addRepresentation(rep)
+            anyLoaded = true
+        }
+        guard anyLoaded else { return nil }
+        image.isTemplate = true
+        return image
     }
 
     private func rebindHotkeys() {

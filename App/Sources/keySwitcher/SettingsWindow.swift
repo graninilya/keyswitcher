@@ -249,6 +249,13 @@ struct BehaviorTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 BehaviorRow(
+                    icon: "wand.and.rays",
+                    title: "Авто-замена при наборе",
+                    subtitle: "Когда выключено — хоткеи (Option, ⌥⇧S, AI) продолжают работать"
+                ) {
+                    Toggle("", isOn: $settings.autoConvertEnabled).labelsHidden()
+                }
+                BehaviorRow(
                     icon: "speaker.wave.2",
                     title: "Звуковой сигнал на замену",
                     subtitle: "Короткий тик после авто-замены или хоткея"
@@ -263,6 +270,13 @@ struct BehaviorTab: View {
                     .labelsHidden()
                     .pickerStyle(.menu)
                     .frame(width: 140)
+                }
+                BehaviorRow(
+                    icon: "menubar.rectangle",
+                    title: "Скрыть иконку из menu bar",
+                    subtitle: "Q*Й работает в фоне. Открыть настройки — повторный запуск .app из Программ"
+                ) {
+                    Toggle("", isOn: $settings.hideStatusIcon).labelsHidden()
                 }
                 BehaviorRow(
                     icon: "power",

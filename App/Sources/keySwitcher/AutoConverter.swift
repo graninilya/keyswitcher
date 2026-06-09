@@ -68,6 +68,10 @@ final class AutoConverter {
             Log.auto.info("disabled, skip word='\(word, privacy: .public)'")
             return
         }
+        guard Settings.shared.autoConvertEnabled else {
+            Log.auto.info("autoConvert disabled, skip word='\(word, privacy: .public)'")
+            return
+        }
         let result = LayoutMap.shared.autoConvert(word)
         Log.auto.info("word='\(word, privacy: .public)' → \(String(describing: result), privacy: .public)")
         guard let converted = result else { return }

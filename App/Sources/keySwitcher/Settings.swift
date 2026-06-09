@@ -2,6 +2,10 @@ import Foundation
 import AppKit
 import ServiceManagement
 
+extension Notification.Name {
+    static let qkbStatusIconVisibilityChanged = Notification.Name("qkbStatusIconVisibilityChanged")
+}
+
 struct HotkeyConfig: Codable {
     var smartConvert: HotkeyBinding
     var forceSwap: HotkeyBinding
@@ -115,6 +119,15 @@ final class Settings: ObservableObject {
     @Published var enabled: Bool {
         didSet { UserDefaults.standard.set(enabled, forKey: "enabled") }
     }
+    @Published var autoConvertEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoConvertEnabled, forKey: "autoConvertEnabled") }
+    }
+    @Published var hideStatusIcon: Bool {
+        didSet {
+            UserDefaults.standard.set(hideStatusIcon, forKey: "hideStatusIcon")
+            NotificationCenter.default.post(name: .qkbStatusIconVisibilityChanged, object: nil)
+        }
+    }
     @Published var launchAtLogin: Bool {
         didSet { applyLaunchAtLogin(launchAtLogin) }
     }
@@ -185,6 +198,8 @@ final class Settings: ObservableObject {
             self.soundName = ""
         }
         self.enabled = d.object(forKey: "enabled") as? Bool ?? true
+        self.autoConvertEnabled = d.object(forKey: "autoConvertEnabled") as? Bool ?? true
+        self.hideStatusIcon = d.object(forKey: "hideStatusIcon") as? Bool ?? false
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         let stored = (d.array(forKey: "ignoredAutoSwap") as? [String]) ?? []
         self.ignoredAutoSwap = Set(stored.map { $0.lowercased() })
