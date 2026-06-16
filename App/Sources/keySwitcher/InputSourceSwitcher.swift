@@ -12,6 +12,13 @@ enum InputSourceSwitcher {
         TISCopyCurrentKeyboardInputSource()?.takeRetainedValue()
     }
 
+    /// nil если не EN и не RU. Используется чтобы определить направление свапа
+    /// для строк без букв (пунктуация / цифры) — `5:` в RU режиме идёт через ruToEn.
+    static func currentLanguage() -> InputLanguage? {
+        guard let src = current() else { return nil }
+        return InputLanguage(rawValue: primaryLanguage(of: src) ?? "")
+    }
+
     static func switchTo(_ lang: InputLanguage) {
         guard let source = findSource(forLanguage: lang.rawValue) else {
             Log.auto.info("switchTo(\(lang.rawValue, privacy: .public)): no matching source found")

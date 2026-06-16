@@ -3,6 +3,7 @@ import SwiftUI
 import ApplicationServices
 
 private let onboardingDoneKey = "hasOnboarded"
+private let starPromptShownKey = "hasShownStarPrompt"
 
 final class OnboardingWindowController {
     static let shared = OnboardingWindowController()
@@ -16,6 +17,20 @@ final class OnboardingWindowController {
 
     static func markCompleted() {
         UserDefaults.standard.set(true, forKey: onboardingDoneKey)
+        // Полный онбординг включает Star-шаг, отдельно показывать не надо
+        UserDefaults.standard.set(true, forKey: starPromptShownKey)
+    }
+
+    /// Показываем «звёздное» окно один раз для существующих юзеров после
+    /// апдейта на версию с этой фичей. Не показываем если: онбординг ещё не
+    /// пройден (там Star-шаг и так будет), или этот prompt уже показывали.
+    static func showStarPromptIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: onboardingDoneKey),
+              !UserDefaults.standard.bool(forKey: starPromptShownKey) else { return }
+        UserDefaults.standard.set(true, forKey: starPromptShownKey)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            shared.showStarOnly()
+        }
     }
 
     func show() {
@@ -36,9 +51,43 @@ final class OnboardingWindowController {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func showStarOnly() {
+        if window != nil { return }
+        let view = StarOnlyWindow { [weak self] in self?.close() }
+        let host = NSHostingController(rootView: view)
+        let w = NSWindow(contentViewController: host)
+        w.title = "Q*Й обновился"
+        w.styleMask = [.titled, .closable]
+        w.setContentSize(NSSize(width: 440, height: 380))
+        w.center()
+        w.isReleasedWhenClosed = false
+        self.window = w
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func close() {
         window?.close()
         window = nil
+    }
+}
+
+private struct StarOnlyWindow: View {
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            StarStep()
+            Divider()
+            HStack {
+                Spacer()
+                Button("Закрыть", action: onClose)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+            }
+            .padding(20)
+        }
+        .frame(width: 440, height: 380)
     }
 }
 
@@ -46,14 +95,15 @@ final class OnboardingWindowController {
 private struct OnboardingRoot: View {
     let onFinish: () -> Void
     @State private var step = 0
-    private let total = 3
+    private let total = 4
 
     var body: some View {
         VStack(spacing: 0) {
             Group {
                 if step == 0 { WelcomeStep() }
                 else if step == 1 { DemoStep() }
-                else { PermissionStep() }
+                else if step == 2 { PermissionStep() }
+                else { StarStep() }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -690,6 +740,64 @@ private struct PermissionStep: View {
         _ = AXIsProcessTrustedWithOptions(opts)
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Шаг 4: звезда на GitHub
+
+private struct StarStep: View {
+    @State private var opened = false
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(Color.yellow.opacity(0.15))
+                    .frame(width: 110, height: 110)
+                Image(systemName: opened ? "star.fill" : "star")
+                    .font(.system(size: 56, weight: .medium))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.yellow, Color.orange],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                    .scaleEffect(opened ? 1.15 : 1.0)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.55), value: opened)
+            }
+
+            VStack(spacing: 8) {
+                Text("Готово!")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("Q*Й — открытое и бесплатное приложение. Если оно тебе полезно — поддержи звездой на GitHub. Это самое простое спасибо автору.")
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 50)
+            }
+
+            Button {
+                if let url = URL(string: "https://github.com/graninilya/keyswitcher") {
+                    NSWorkspace.shared.open(url)
+                    opened = true
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "star.fill")
+                    Text(opened ? "Спасибо!" : "Поставить звезду")
+                }
+                .padding(.horizontal, 6)
+            }
+            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
+            .tint(.yellow)
+            .disabled(opened)
+
+            Spacer()
         }
     }
 }

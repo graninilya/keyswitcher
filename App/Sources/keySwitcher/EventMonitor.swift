@@ -106,6 +106,11 @@ final class KeystrokeBuffer {
     /// последующие пробелы/знаки препинания). Нужен чтобы корректно посчитать
     /// сколько backspace'ов сделать перед re-typing.
     private(set) var lastTail: String = ""
+    /// Сырой сегмент с момента последнего пробела/таба/новой строки — включает
+    /// цифры, пунктуацию и буквы. Нужен для случаев типа `0ю2ю8` где обычный
+    /// lastWord/lastTail видит только `ю` + `8`, а юзер хочет свапнуть весь
+    /// сегмент → `0.2.8`.
+    private(set) var lastSegment: String = ""
     private(set) var lastActivity: Date = .distantPast
 
     private var recentWords: [String] = []
@@ -176,6 +181,13 @@ final class KeystrokeBuffer {
         if keyCode == 51 {
             if !currentWord.isEmpty {
                 currentWord.removeLast()
+            } else if !lastTail.isEmpty {
+                // currentWord уже пуст — backspace ест последний символ tail
+                // (например после ` 5:` → backspace убирает `:`).
+                lastTail.removeLast()
+            }
+            if !lastSegment.isEmpty {
+                lastSegment.removeLast()
             }
             return
         }
@@ -209,6 +221,12 @@ final class KeystrokeBuffer {
         // EN-side пунктуация (`;[]'\`\,.`) на той же физической клавише даёт русскую букву —
         // включаем в слово, чтобы автоконвертер мог распознать промах раскладки
         let layoutMappedChars: Set<Character> = [";", "[", "]", "`", "\\", "'", ",", "."]
+        let isWhitespace = ch == " " || ch == "\t" || ch == "\n"
+        if isWhitespace {
+            lastSegment = ""
+        } else {
+            lastSegment.append(ch)
+        }
         if ch.isLetter || ch == "-" || layoutMappedChars.contains(ch) {
             // Начало нового слова — сбрасываем накопленный tail
             if currentWord.isEmpty {
@@ -249,6 +267,7 @@ final class KeystrokeBuffer {
         lastWord = ""
         lastTrigger = nil
         lastTail = ""
+        lastSegment = ""
     }
 
     func clearContext() {

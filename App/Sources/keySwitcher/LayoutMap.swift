@@ -107,12 +107,14 @@ final class LayoutMap {
     }
 
     /// Знаки которые одинаковы в обеих раскладках по смыслу — не маппим даже если
-    /// физически на разных клавишах (`,`/`Б`, `.`/`Ю`, RU `.`/`/`). Иначе
-    /// `Hello,` → `РуддщБ` вместо `Руддщ,`.
+    /// физически на разных клавишах. `Hello,` → `Руддщ,` вместо `РуддщБ`.
+    ///
+    /// Узкий набор: только частая «sentence punctuation» где user точно имел в виду
+    /// семантику. `:` `;` `?` `"` исключены — на кастомных раскладках (Ukelele,
+    /// Russian-PC) они часто стоят на тех же физических клавишах что EN spec-chars
+    /// (`:` ↔ `%`, `?` ↔ `&`) и юзер хочет реальный свап.
     private static let semanticPunct: Set<Character> = [
-        ".", ",", "!", "?", ":", ";",
-        "(", ")", "{", "}",
-        "\"", "«", "»", "—", "–", "…",
+        ".", ",", "!", "(", ")", "«", "»", "—", "–", "…",
     ]
 
 
@@ -125,6 +127,16 @@ final class LayoutMap {
         if Self.semanticPunct.contains(ch) { return ch }
         let table = toCyrillic ? enToRu : ruToEn
         return table[ch] ?? ch
+    }
+
+    /// Свап строки в указанном направлении (используется для tail в смарт-конверте).
+    /// Semantic punct сохраняется. Остальные символы маппятся по указанной таблице.
+    func swapDirectional(_ s: String, toCyrillic: Bool) -> String {
+        let table = toCyrillic ? enToRu : ruToEn
+        return String(s.map { ch -> Character in
+            if Self.semanticPunct.contains(ch) { return ch }
+            return table[ch] ?? ch
+        })
     }
 
     /// preservePunct=true: `.` `,` `!` `?` `:` `;` (и парные кавычки/скобки)
@@ -155,9 +167,24 @@ final class LayoutMap {
             return String(s.map { mapChar($0, table: ruToEn) })
         }
 
+        // Букв нет совсем (`5:`, `?!`) — направление не из строки, а из
+        // текущей раскладки: если юзер сейчас в RU, мапим RU→EN. Иначе EN→RU.
+        let currentLang = InputSourceSwitcher.currentLanguage()
+        let table: [Character: Character]
+        if currentLang == .russian {
+            table = ruToEn
+        } else if currentLang == .english {
+            table = enToRu
+        } else {
+            // Неизвестная раскладка — пытаемся обе.
+            return String(s.map { ch -> Character in
+                if preservePunct, Self.semanticPunct.contains(ch) { return ch }
+                return enToRu[ch] ?? ruToEn[ch] ?? ch
+            })
+        }
         return String(s.map { ch -> Character in
             if preservePunct, Self.semanticPunct.contains(ch) { return ch }
-            return enToRu[ch] ?? ruToEn[ch] ?? ch
+            return table[ch] ?? ch
         })
     }
 

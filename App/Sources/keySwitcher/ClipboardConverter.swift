@@ -216,6 +216,29 @@ final class ClipboardConverter {
         }
     }
 
+    /// Свапает «сырой сегмент с последнего пробела» — для случаев `0ю2ю8` где
+    /// обычный word+tail видит только часть.
+    private func convertSegment(_ segment: String, transform: (String) -> String?) {
+        guard let converted = transform(segment), converted != segment else {
+            Log.clipboard.info("  segment unchanged, skip")
+            return
+        }
+        Log.clipboard.info("  → segment '\(segment, privacy: .public)' → '\(converted, privacy: .public)'")
+        let savedLayout = InputSourceSwitcher.current()
+        for _ in 0..<segment.count {
+            sendKey(keyCode: 51)
+        }
+        typeUnicode(converted)
+        if let lang = converted.inputLanguageForLayout {
+            InputSourceSwitcher.switchTo(lang)
+        }
+        AutoConverter.shared.record(
+            original: segment, converted: converted, tail: "", originalLayout: savedLayout
+        )
+        Self.maybePromoteToRule(original: segment, converted: converted)
+        KeystrokeBuffer.shared.clear()
+    }
+
     /// Считаем single-word ручные свапы — после порога предлагаем добавить в Правила.
     /// Multi-word / выделения с пробелами не учитываем (там разумнее не лезть).
     static func maybePromoteToRule(original: String, converted: String) {
@@ -234,11 +257,49 @@ final class ClipboardConverter {
         let buffer = KeystrokeBuffer.shared
         let isMidTyping = !buffer.currentWord.isEmpty
         let word = isMidTyping ? buffer.currentWord : buffer.lastWord
-        Log.clipboard.info("convertLastWord: word='\(word, privacy: .public)' midTyping=\(isMidTyping) lastTrigger=\(String(describing: buffer.lastTrigger), privacy: .public)")
+        Log.clipboard.info("convertLastWord: word='\(word, privacy: .public)' midTyping=\(isMidTyping) lastTrigger=\(String(describing: buffer.lastTrigger), privacy: .public) segment='\(buffer.lastSegment, privacy: .public)'")
+
+        // Если сегмент с последнего пробела «богаче» чем word+tail (содержит
+        // больше символов из-за цифр/пунктуации в середине — `0ю2ю8`), свапаем
+        // его целиком. Иначе — стандартный путь word + tail.
+        let segment = buffer.lastSegment
+        let wordTailLen = word.count + (isMidTyping ? 0 : buffer.lastTail.count)
+        if !segment.isEmpty, segment.count > wordTailLen {
+            convertSegment(segment, transform: transform)
+            return
+        }
         guard !word.isEmpty else {
             Log.clipboard.info("  word empty, skip")
             return
         }
+
+        let rawTail = isMidTyping ? "" : buffer.lastTail
+        let lowerWord = word.lowercased()
+
+        // Если автоконвертер сам бы не тронул слово — оно «реально» для своей
+        // раскладки (или базовая форма в словаре, или хорошие триграммы).
+        // Тогда не свапаем его, только tail. Лечит `сочетанием 5:` → `сочетанием 5%`.
+        let autoWouldConvert = LayoutMap.shared.autoConvert(word) != nil
+        let isMonoCyr = lowerWord.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" }
+        let isMonoLat = lowerWord.allSatisfy { ("a"..."z").contains($0) }
+        let isRealRussian = isMonoCyr && !autoWouldConvert
+        let isRealEnglish = isMonoLat && !autoWouldConvert
+
+        if (isRealRussian || isRealEnglish) && !rawTail.isEmpty {
+            let convertedIsCyrillic = !isRealRussian
+            let mappedTail = LayoutMap.shared.swapDirectional(rawTail, toCyrillic: convertedIsCyrillic)
+            guard mappedTail != rawTail else {
+                Log.clipboard.info("  word is real (\(isRealRussian ? "ru" : "en")) and tail unchanged, skip")
+                return
+            }
+            Log.clipboard.info("  word is real, swap only tail '\(rawTail, privacy: .public)' → '\(mappedTail, privacy: .public)'")
+            for _ in 0..<rawTail.count {
+                sendKey(keyCode: 51)
+            }
+            typeUnicode(mappedTail)
+            return
+        }
+
         guard let converted = transform(word) else {
             Log.clipboard.info("  transform returned nil, skip")
             return
@@ -249,11 +310,12 @@ final class ClipboardConverter {
         }
         Log.clipboard.info("  → converting '\(word, privacy: .public)' to '\(converted, privacy: .public)'")
 
-        // Tail = всё что юзер напечатал ПОСЛЕ слова (trigger + последующие пробелы/пунктуация),
-        // если мы не в середине набора. Иначе ничего после слова нет.
-        let tail = isMidTyping ? "" : buffer.lastTail
-        let toDelete = word.count + tail.count
-        Log.clipboard.info("  backspaces=\(toDelete) typing='\(converted + tail, privacy: .public)' (tail='\(tail, privacy: .public)')")
+        // Свапаем tail в ту же сторону что и слово: если "раскладке" → "hfcrkflrt",
+        // то ` 5:` тоже идёт через ruToEn → ` 5%`.
+        let convertedIsCyrillic = converted.lowercased().contains { ("а"..."я").contains($0) || $0 == "ё" }
+        let tail = LayoutMap.shared.swapDirectional(rawTail, toCyrillic: convertedIsCyrillic)
+        let toDelete = word.count + rawTail.count
+        Log.clipboard.info("  backspaces=\(toDelete) typing='\(converted + tail, privacy: .public)' (tail='\(tail, privacy: .public)' rawTail='\(rawTail, privacy: .public)')")
 
         let savedLayout = InputSourceSwitcher.current()
 

@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ensureAccessibility()
         } else {
             ensureAccessibility()
+            // Существующие юзеры после апдейта — однократное окошко со звездой.
+            OnboardingWindowController.showStarPromptIfNeeded()
         }
 
         startMonitorsOrPoll()
