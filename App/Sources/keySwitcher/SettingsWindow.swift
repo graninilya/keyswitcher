@@ -344,7 +344,7 @@ struct HotkeysTab: View {
                 )
                 HotkeyRow(
                     title: "Причесать текст",
-                    subtitle: "Причесать текст: тире, кавычки, лишние пробелы",
+                    subtitle: "Тире, кавычки-«ёлочки», лишние пробелы. Без интернета",
                     icon: "textformat.abc.dottedunderline",
                     binding: Binding(
                         get: { settings.hotkeys.typography },
