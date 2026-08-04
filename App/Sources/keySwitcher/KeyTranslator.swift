@@ -8,15 +8,7 @@ enum KeyTranslator {
     static func character(for event: CGEvent) -> Character? {
         let keycode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 
-        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else {
-            return nil
-        }
-        guard let layoutDataPtr = TISGetInputSourceProperty(
-            source, kTISPropertyUnicodeKeyLayoutData
-        ) else {
-            return nil
-        }
-        let layoutData = Unmanaged<CFData>.fromOpaque(layoutDataPtr).takeUnretainedValue() as Data
+        guard let layoutData = KeyboardLayoutCache.currentLayoutData() else { return nil }
 
         let flags = event.flags
         var mods: UInt32 = 0

@@ -4,6 +4,8 @@ import ApplicationServices
 
 private let onboardingDoneKey = "hasOnboarded"
 private let starPromptShownKey = "hasShownStarPrompt"
+/// Версия, о новшествах которой уже рассказали. Меняется при заметных обновлениях.
+private let whatsNewShownKey = "whatsNewShown.0.3.0"
 
 final class OnboardingWindowController {
     static let shared = OnboardingWindowController()
@@ -25,12 +27,20 @@ final class OnboardingWindowController {
     /// апдейта на версию с этой фичей. Не показываем если: онбординг ещё не
     /// пройден (там Star-шаг и так будет), или этот prompt уже показывали.
     static func showStarPromptIfNeeded() {
-        guard UserDefaults.standard.bool(forKey: onboardingDoneKey),
-              !UserDefaults.standard.bool(forKey: starPromptShownKey) else { return }
-        UserDefaults.standard.set(true, forKey: starPromptShownKey)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            shared.showStarOnly()
+        let d = UserDefaults.standard
+        guard d.bool(forKey: onboardingDoneKey) else { return }
+
+        // Обновившимся показываем, что изменилось: просьба о звезде внутри этого же окна.
+        if !d.bool(forKey: whatsNewShownKey) {
+            d.set(true, forKey: whatsNewShownKey)
+            d.set(true, forKey: starPromptShownKey)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { shared.showWhatsNew() }
+            return
         }
+
+        guard !d.bool(forKey: starPromptShownKey) else { return }
+        d.set(true, forKey: starPromptShownKey)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { shared.showStarOnly() }
     }
 
     func show() {
@@ -44,6 +54,21 @@ final class OnboardingWindowController {
         w.title = "Добро пожаловать"
         w.styleMask = [.titled, .closable]
         w.setContentSize(NSSize(width: 640, height: 480))
+        w.center()
+        w.isReleasedWhenClosed = false
+        self.window = w
+        w.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func showWhatsNew() {
+        if window != nil { return }
+        let view = WhatsNewWindow { [weak self] in self?.close() }
+        let host = NSHostingController(rootView: view)
+        let w = NSWindow(contentViewController: host)
+        w.title = "Что нового"
+        w.styleMask = [.titled, .closable]
+        w.setContentSize(NSSize(width: 480, height: 560))
         w.center()
         w.isReleasedWhenClosed = false
         self.window = w
@@ -72,6 +97,90 @@ final class OnboardingWindowController {
     }
 }
 
+/// Что изменилось для тех, кто обновился. Без технических подробностей —
+/// только то, что человек заметит в работе.
+private struct WhatsNewWindow: View {
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Q*Й обновился")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("Главное — теперь он не подводит. И вот что ещё появилось.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 26)
+            .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 13) {
+                    CapabilityRow(
+                        icon: "checkmark.seal.fill", color: .green,
+                        title: "Больше не пропускает и не портит",
+                        text: "Раньше при быстрой печати исправление иногда не срабатывало или съедало лишние буквы. Причины найдены и убраны."
+                    )
+                    CapabilityRow(
+                        icon: "app.badge", color: .blue,
+                        title: "Не лезет в терминал",
+                        text: "Там ты набираешь команды, а не слова. Option при этом работает как обычно."
+                    )
+                    CapabilityRow(
+                        icon: "chart.bar.fill", color: .green,
+                        title: "Помнит, сколько времени сберёг",
+                        text: "Каждая правка — это секунды, которые ты не потратил на переключение и перенабор. Смотри в меню."
+                    )
+                    CapabilityRow(
+                        icon: "textformat", color: .purple,
+                        title: "Наводит порядок в тексте",
+                        text: "⌥⇧P — нормальное тире, кавычки-«ёлочки», лишние пробелы прочь. Код и ссылки не тронет."
+                    )
+                    CapabilityRow(
+                        icon: "wand.and.stars", color: .accentColor,
+                        title: "Больше не молчит, когда думает",
+                        text: "Пока AI правит текст, рядом с курсором видно, что работа идёт. А если что-то пошло не так — скажет, что именно."
+                    )
+                    CapabilityRow(
+                        icon: "pause.circle.fill", color: .orange,
+                        title: "Можно попросить не мешать",
+                        text: "Пауза на полчаса, если нужно спокойно попечатать самому."
+                    )
+                    CapabilityRow(
+                        icon: "lock.fill", color: .gray,
+                        title: "Бережнее с твоим текстом",
+                        text: "То, что ты набираешь, больше не оседает в системном журнале. Ключ от своего AI лежит в связке ключей, а не в открытом файле."
+                    )
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 8)
+            }
+
+            Divider()
+
+            HStack {
+                Button {
+                    if let url = URL(string: "https://github.com/graninilya/keyswitcher") {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "star")
+                        Text("Поддержать звездой")
+                    }
+                }
+                Spacer()
+                Button("Понятно", action: onClose)
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+            }
+            .padding(20)
+        }
+        .frame(width: 480, height: 560)
+    }
+}
+
 private struct StarOnlyWindow: View {
     let onClose: () -> Void
 
@@ -95,14 +204,15 @@ private struct StarOnlyWindow: View {
 private struct OnboardingRoot: View {
     let onFinish: () -> Void
     @State private var step = 0
-    private let total = 4
+    private let total = 5
 
     var body: some View {
         VStack(spacing: 0) {
             Group {
                 if step == 0 { WelcomeStep() }
                 else if step == 1 { DemoStep() }
-                else if step == 2 { PermissionStep() }
+                else if step == 2 { CapabilitiesStep() }
+                else if step == 3 { PermissionStep() }
                 else { StarStep() }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -155,7 +265,7 @@ private struct WelcomeStep: View {
                 .multilineTextAlignment(.center)
                 .font(.system(size: 16))
                 .foregroundColor(.secondary)
-            Text("Не нужно переключаться вручную — программа\nсама поймёт когда раскладка не та и исправит.")
+            Text("Печатай как печатается. Заметит, что раскладка\nне та, и всё исправит — сам.")
                 .multilineTextAlignment(.center)
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
@@ -690,9 +800,9 @@ private struct PermissionStep: View {
             Spacer()
 
             VStack(spacing: 6) {
-                Text("Последний шаг")
+                Text("Осталось одно")
                     .font(.system(size: 22, weight: .semibold))
-                Text("Q*Й нужны два уровня доступа чтобы ловить нажатия и менять текст")
+                Text("Чтобы замечать опечатки и править их, нужно разрешение системы")
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
@@ -718,9 +828,11 @@ private struct PermissionStep: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Хоткеи по умолчанию")
                     .font(.system(size: 13, weight: .semibold))
-                HotkeyHint(symbol: "⌥", desc: "Сменить раскладку выделения / последнего слова. Повторное нажатие в 5с — откат.")
-                HotkeyHint(symbol: "⌥⇧S", desc: "Принудительный свап.")
-                HotkeyHint(symbol: "⌥⇧T", desc: "Транслитерация русского в латиницу.")
+                HotkeyHint(symbol: "⌥", desc: "Исправить выделенное или последнее слово. Нажать ещё раз в течение 5 секунд — вернуть как было.")
+                HotkeyHint(symbol: "⌥ правый", desc: "Расставить запятые и поправить опечатки.")
+                HotkeyHint(symbol: "⌥⇧P", desc: "Причесать текст: тире, кавычки, лишние пробелы.")
+                HotkeyHint(symbol: "⌥⇧S", desc: "Поменять раскладку не спрашивая.")
+                HotkeyHint(symbol: "⌥⇧T", desc: "Написать русское слово латиницей.")
             }
             .padding(.horizontal, 40)
 
@@ -744,7 +856,79 @@ private struct PermissionStep: View {
     }
 }
 
-// MARK: - Шаг 4: звезда на GitHub
+// MARK: - Шаг 3: что умеет кроме замены раскладки
+
+/// Правила по программам объясняем обязательно: без этого молчание автозамены
+/// в терминале выглядит как поломка, а не как задуманное поведение.
+private struct CapabilitiesStep: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Что ещё умеет")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("Всё уже настроено. Заглянуть и поменять можно в любой момент.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.top, 26)
+
+            CapabilityRow(
+                icon: "app.badge",
+                color: .blue,
+                title: "Не лезет в терминал",
+                text: "Там ты набираешь команды, а не слова — исправлять их незачем. Если всё-таки понадобится, Option сработает как обычно."
+            )
+            CapabilityRow(
+                icon: "chart.bar.fill",
+                color: .green,
+                title: "Помнит, сколько времени сберёг",
+                text: "Каждая правка — это секунды, которые ты не потратил на переключение и перенабор. Они складываются, и это видно."
+            )
+            CapabilityRow(
+                icon: "pause.circle.fill",
+                color: .orange,
+                title: "Можно попросить не мешать",
+                text: "Если нужно спокойно попечатать самому — поставь на паузу. Через полчаса вернётся сам."
+            )
+            CapabilityRow(
+                icon: "textformat",
+                color: .purple,
+                title: "Наводит порядок в тексте",
+                text: "Ставит нормальное тире, кавычки-«ёлочки», убирает лишние пробелы. Мгновенно и никуда ничего не отправляет."
+            )
+
+            Spacer()
+        }
+        .padding(.horizontal, 36)
+    }
+}
+
+private struct CapabilityRow: View {
+    let icon: String
+    let color: Color
+    let title: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(color)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(text)
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+
+// MARK: - Шаг 5: звезда на GitHub
 
 private struct StarStep: View {
     @State private var opened = false
@@ -772,7 +956,7 @@ private struct StarStep: View {
             VStack(spacing: 8) {
                 Text("Готово!")
                     .font(.system(size: 22, weight: .semibold))
-                Text("Q*Й — открытое и бесплатное приложение. Если оно тебе полезно — поддержи звездой на GitHub. Это самое простое спасибо автору.")
+                Text("Q*Й бесплатный, и код открыт. Если он тебе пригодился — поставь звезду на GitHub. Это ничего не стоит, а автору приятно.")
                     .multilineTextAlignment(.center)
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
@@ -845,14 +1029,15 @@ private struct HotkeyHint: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(symbol)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
-                    RoundedRectangle(cornerRadius: 5)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(Color.secondary.opacity(0.15))
                 )
-                .frame(minWidth: 50, alignment: .leading)
+                // Ширина колонки одинаковая: бейджи разной длины сдвигали описания.
+                .frame(width: 92, alignment: .leading)
             Text(desc)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)

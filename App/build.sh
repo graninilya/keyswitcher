@@ -45,8 +45,15 @@ else
     exit 1
 fi
 
-# Копируем JSON-словари в Resources/ (Bundle.main их найдёт)
-cp "$DICTIONARIES"/*.json "$APP_BUNDLE/Contents/Resources/"
+# Копируем JSON-словари в Resources/ (Bundle.main их найдёт).
+# Список явный: bad_ngrams.json (2.6 МБ) больше не используется кодом и в бандл не едет.
+for dict in layout_map words_ru words_en trigrams_ru trigrams_en; do
+    if [[ ! -f "$DICTIONARIES/$dict.json" ]]; then
+        echo "✗ Не найден словарь: $DICTIONARIES/$dict.json" >&2
+        exit 1
+    fi
+    cp "$DICTIONARIES/$dict.json" "$APP_BUNDLE/Contents/Resources/"
+done
 
 # Иконка приложения
 if [[ -f icons/AppIcon.icns ]]; then

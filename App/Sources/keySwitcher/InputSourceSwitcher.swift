@@ -20,16 +20,23 @@ enum InputSourceSwitcher {
     }
 
     static func switchTo(_ lang: InputLanguage) {
+        // TISSelectInputSource — системный бродкаст всем приложениям. Если раскладка
+        // уже нужная, дёргать его незачем: лишние уведомления сбивают чужие IME.
+        guard currentLanguage() != lang else { return }
         guard let source = findSource(forLanguage: lang.rawValue) else {
             Log.auto.info("switchTo(\(lang.rawValue, privacy: .public)): no matching source found")
             return
         }
         let status = TISSelectInputSource(source)
+        // Уведомление о смене приходит с задержкой, а следующее нажатие надо
+        // декодировать уже новой раскладкой — сбрасываем кэш сразу.
+        KeyboardLayoutCache.invalidateAfterSwitch()
         Log.auto.info("switchTo(\(lang.rawValue, privacy: .public)): TISSelectInputSource → \(status)")
     }
 
     static func restore(_ source: TISInputSource) {
         let status = TISSelectInputSource(source)
+        KeyboardLayoutCache.invalidateAfterSwitch()
         Log.auto.info("restore: TISSelectInputSource → \(status)")
     }
 

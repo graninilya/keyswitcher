@@ -12,6 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Warm.prepare()
+        KeyboardLayoutCache.startObserving()
+        SecureInput.startObserving()
+        ContextResolver.startObserving()
+        AppRules.shared.startObserving()
+        AppRules.shared.undoMistakenSeed()
+        AppRules.shared.seedDefaultsIfNeeded()
+
         converter = ClipboardConverter()
         hotkeys = HotkeyManager()
         modifierMonitor = ModifierHotkeyMonitor()
@@ -43,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         settings.$hotkeys
             .dropFirst()
-            .sink { [weak self] _ in self?.rebindHotkeys() }
+            .sink { [weak self] cfg in self?.rebindHotkeys(cfg) }
             .store(in: &cancellables)
         settings.$enabled
             .sink { [weak self] newValue in self?.updateStatusIcon(enabled: newValue) }
@@ -84,12 +92,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let menu = NSMenu()
-        menu.delegate = self  // AX-пункт обновляется при открытии
+        menu.delegate = self  // состояние и счётчики обновляются при открытии
+
+        // Состояние движка — отвечает на «работает ли прямо сейчас».
+        let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        statusLine.identifier = NSUserInterfaceItemIdentifier("healthState")
+        statusLine.isEnabled = false
+        menu.addItem(statusLine)
+
+        let savedLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        savedLine.identifier = NSUserInterfaceItemIdentifier("savedTime")
+        savedLine.isEnabled = false
+        menu.addItem(savedLine)
+
+        menu.addItem(.separator())
 
         // Toggle включено
         let toggleItem = makeItem("Включено", action: #selector(toggleEnabled))
+        toggleItem.identifier = NSUserInterfaceItemIdentifier("toggleEnabled")
         toggleItem.state = settings.enabled ? .on : .off
         menu.addItem(toggleItem)
+
+        // Пауза на время
+        let pauseItem = NSMenuItem(title: "Пауза", action: nil, keyEquivalent: "")
+        pauseItem.identifier = NSUserInterfaceItemIdentifier("pause")
+        pauseItem.image = menuIcon("pause.circle")
+        let pauseMenu = NSMenu()
+        for minutes in [15, 30, 60] {
+            let item = NSMenuItem(title: "На \(minutes) мин", action: #selector(pauseFor(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = minutes
+            pauseMenu.addItem(item)
+        }
+        pauseMenu.addItem(.separator())
+        let resumeItem = NSMenuItem(title: "Продолжить", action: #selector(resumeFromPause), keyEquivalent: "")
+        resumeItem.target = self
+        resumeItem.identifier = NSUserInterfaceItemIdentifier("resume")
+        pauseMenu.addItem(resumeItem)
+        pauseItem.submenu = pauseMenu
+        menu.addItem(pauseItem)
 
         menu.addItem(.separator())
 
@@ -155,7 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let item = statusItem, let button = item.button else { return }
         let isOn = enabled ?? settings.enabled
 
-        if let menu = item.menu, let toggleItem = menu.items.first {
+        // По идентификатору, а не по индексу: выше в меню появились строки состояния,
+        // и галочка «Включено» уезжала на них.
+        if let menu = item.menu,
+           let toggleItem = menu.items.first(where: { $0.identifier?.rawValue == "toggleEnabled" }) {
             toggleItem.state = isOn ? .on : .off
         }
 
@@ -191,27 +235,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return image
     }
 
-    private func rebindHotkeys() {
+    /// Конфигурацию принимаем параметром: @Published публикует значение в willSet,
+    /// поэтому подписчик, читающий settings.hotkeys, получал бы предыдущее — и новые
+    /// хоткеи вступали бы в силу только со следующей правки.
+    private func rebindHotkeys(_ config: HotkeyConfig? = nil) {
+        let cfg = config ?? settings.hotkeys
         hotkeys.unregisterAll()
         modifierMonitor.unbindAll()
 
-        bind(settings.hotkeys.smartConvert,        action: { [weak self] in self?.smartConvert() })
-        bind(settings.hotkeys.forceSwap,           action: { [weak self] in self?.forceSwap() })
-        bind(settings.hotkeys.transliterate,       action: { [weak self] in self?.transliterate() })
-        bind(settings.hotkeys.polishText,          action: { [weak self] in self?.polishText() })
-        bindToggleEnabled(settings.hotkeys.toggleEnabled)
+        bind(cfg.smartConvert,        action: { [weak self] in self?.smartConvert() })
+        bind(cfg.forceSwap,           action: { [weak self] in self?.forceSwap() })
+        bind(cfg.transliterate,       action: { [weak self] in self?.transliterate() })
+        bind(cfg.polishText,          action: { [weak self] in self?.polishText() })
+        bind(cfg.typography,          action: { [weak self] in self?.applyTypography() })
+        bindToggleEnabled(cfg.toggleEnabled)
     }
 
     private func bind(_ binding: HotkeyBinding, action: @escaping () -> Void) {
+        // Хоткеи работают в режиме «только по хоткею» — молчит там лишь автозамена.
+        // Полностью выключено и пауза глушат и их.
+        func allowed(_ enabled: Bool?) -> Bool {
+            guard enabled == true else { return false }
+            guard !PauseController.shared.isPaused else { return false }
+            return AppRules.shared.currentMode != .off
+        }
         switch binding {
         case .modifier(let m):
             modifierMonitor.bind(m) { [weak self] in
-                guard self?.settings.enabled == true else { return }
+                guard allowed(self?.settings.enabled) else { return }
                 action()
             }
         case .combo(let c):
             hotkeys.register(modifiers: c.modifiers, keyCodeRaw: UInt32(c.keyCode)) { [weak self] in
-                guard self?.settings.enabled == true else { return }
+                guard allowed(self?.settings.enabled) else { return }
                 action()
             }
         case .disabled:
@@ -309,22 +365,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func transliterate() {
         logHotkey("transliterate")
-        converter.convertSelectionOnly { Transliteration.apply($0) }
+        converter.convertSelectionOnly { input in
+            let out = Transliteration.apply(input)
+            // Латиница возвращается как есть — считать это транслитерацией нельзя.
+            guard out != input else { return out }
+            Stats.shared.noteTransliteration()
+            return out
+        }
     }
 
     @objc private func polishText() {
         logHotkey("polishText")
         guard settings.aiEnabled else {
-            Log.hotkey.info("polish: AI disabled in Settings")
+            Task { @MainActor in PolishPanel.shared.showError("AI выключен — включить можно в настройках") }
             return
         }
-        converter.polishCurrentTargetAsync { text in
-            switch await LLMPolisher.polish(text) {
-            case .success(let polished): return polished
+        let useTypography = settings.typographyBeforeAI
+        let wantPreview = settings.polishPreview
+        // Метка попытки: если человек закроет панель, поздний ответ её не поднимет.
+        let session = MainActor.assumeIsolated { PolishPanel.shared.beginSession() }
+        Task { @MainActor in PolishPanel.shared.showWorking() }
+
+        converter.polishCurrentTargetAsync(transform: { text in
+            // Механические правки делаем сами: модели остаётся смысловая часть,
+            // а ёлочки и тире получаются одинаково предсказуемо каждый раз.
+            let prepared = useTypography ? Typography.apply(text) : text
+
+            switch await LLMPolisher.polish(prepared) {
+            case .success(let polished):
+                let final = useTypography ? Typography.apply(polished) : polished
+                guard final != text else {
+                    await MainActor.run { PolishPanel.shared.showError("Тут и так всё в порядке") }
+                    return nil
+                }
+                // Без предпросмотра — прежнее поведение: заменяем сразу.
+                guard wantPreview else {
+                    // Короткая отметка вместо мгновенного исчезновения: видно, что
+                    // правка прошла, и не нужно ничего нажимать.
+                    await MainActor.run { PolishPanel.shared.showDone() }
+                    return final
+                }
+                let decision = await withCheckedContinuation { continuation in
+                    Task { @MainActor in
+                        PolishPanel.shared.showPreview(
+                            generation: session, original: text, result: final
+                        ) { continuation.resume(returning: $0) }
+                    }
+                }
+                switch decision {
+                case .accepted(let value):
+                    return value
+                case .rejected:
+                    return nil
+                case .retry:
+                    // Новый заход стартуем отдельно: этот вызов уже завершён,
+                    // и текст трогать нельзя.
+                    DispatchQueue.main.async { [weak self] in self?.polishText() }
+                    return nil
+                }
             case .failure(let err):
                 Log.hotkey.info("polish error: \(err.localizedDescription, privacy: .public)")
+                await MainActor.run { PolishPanel.shared.showError(err.userMessage) }
                 return nil
             }
+        }, onNoText: {
+            // Частый случай — поле на web-технологиях (Electron, браузер): система
+            // не отдаёт его содержимое, а выделить строку с клавиатуры там нечем.
+            Task { @MainActor in
+                PolishPanel.shared.showError(
+                    "Не получилось забрать текст отсюда. Выдели нужный кусок мышью и нажми ещё раз"
+                )
+            }
+        })
+    }
+
+    @objc private func applyTypography() {
+        logHotkey("typography")
+        // Только по выделению. Путь «последнее слово» ведёт в конверсию раскладки:
+        // он умеет менять хвост через swapDirectional, и ⌥⇧P превращал `текст:`
+        // в `текстЖ` вместо типографики. К отдельному слову правила и неприменимы.
+        converter.applyToSelectionOnly { input in
+            let out = Typography.apply(input)
+            guard out != input else { return nil }
+            Stats.shared.notePolish()
+            return out
         }
     }
 
@@ -343,11 +467,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        func item(_ id: String) -> NSMenuItem? {
+            menu.items.first { $0.identifier?.rawValue == id }
+        }
+
         // Скрываем AX-пункт когда разрешения уже даны — чтобы меню было чище.
-        guard let axItem = menu.items.first(where: {
-            $0.identifier?.rawValue == "axPermission"
-        }) else { return }
-        axItem.isHidden = AXIsProcessTrusted()
+        item("axPermission")?.isHidden = AXIsProcessTrusted()
+
+        let health = AppHealth.state
+        if let line = item("healthState") {
+            line.title = health.isProblem ? "⚠︎ \(health.title)" : health.title
+        }
+
+        if let line = item("savedTime") {
+            let stats = Stats.shared
+            if stats.totalConversions > 0 {
+                line.title = "Сберёг \(stats.savedTimeDescription) · правок: \(stats.totalConversions)"
+            } else {
+                line.title = "Правок пока не было"
+            }
+        }
+
+        if let pause = item("pause") {
+            if let left = PauseController.shared.remainingDescription {
+                pause.title = "На паузе — ещё \(left)"
+            } else {
+                pause.title = "Пауза"
+            }
+            pause.submenu?.items.first { $0.identifier?.rawValue == "resume" }?
+                .isHidden = !PauseController.shared.isPaused
+        }
+    }
+
+    @objc private func pauseFor(_ sender: NSMenuItem) {
+        PauseController.shared.pause(minutes: sender.tag)
+        updateStatusIcon()
+    }
+
+    @objc private func resumeFromPause() {
+        PauseController.shared.resume()
+        updateStatusIcon()
     }
 
     @objc private func showAccessibilityHelp() {

@@ -21,11 +21,13 @@ final class SettingsWindowController {
         let hosting = NSHostingController(rootView: SettingsRoot(host: host))
         let w = NSWindow(contentViewController: hosting)
         w.title = "Q*Й — настройки"
-        w.styleMask = [.titled, .closable, .fullSizeContentView]
+        // Разделы очень разные по объёму: статистику и правила удобно растянуть.
+        w.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isMovableByWindowBackground = true
-        w.setContentSize(NSSize(width: 640, height: 540))
+        w.setContentSize(NSSize(width: 800, height: 620))
+        w.contentMinSize = NSSize(width: 720, height: 520)
         w.center()
         w.isReleasedWhenClosed = false
         self.window = w
@@ -36,13 +38,53 @@ final class SettingsWindowController {
 
 
 enum SettingsTab: Hashable {
-    case hotkeys, behavior, ai, exceptions, rules, updates, about
+    case hotkeys, behavior, apps, ai, exceptions, rules, stats, maintenance, updates, about
 }
 
 /// Класс-обёртка чтобы SettingsWindowController мог менять выбранный таб извне.
 final class SettingsRootHosting: ObservableObject {
     @Published var selection: SettingsTab
     init(selection: SettingsTab) { self.selection = selection }
+}
+
+extension SettingsTab {
+    var title: String {
+        switch self {
+        case .hotkeys:     return "Хоткеи"
+        case .behavior:    return "Поведение"
+        case .apps:        return "Программы"
+        case .ai:          return "AI"
+        case .exceptions:  return "Исключения"
+        case .rules:       return "Правила"
+        case .stats:       return "Статистика"
+        case .maintenance: return "Обслуживание"
+        case .updates:     return "Обновления"
+        case .about:       return "О программе"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .hotkeys:     return "keyboard"
+        case .behavior:    return "slider.horizontal.3"
+        case .apps:        return "app.badge"
+        case .ai:          return "wand.and.stars"
+        case .exceptions:  return "list.bullet.rectangle"
+        case .rules:       return "checklist"
+        case .stats:       return "chart.bar"
+        case .maintenance: return "wrench.and.screwdriver"
+        case .updates:     return "arrow.down.circle"
+        case .about:       return "info.circle"
+        }
+    }
+
+    /// Разделы сгруппированы по смыслу: что нажимать, как себя вести, чему научено,
+    /// и служебное. Плоский список из десяти строк читается хуже.
+    static let groups: [(title: String, items: [SettingsTab])] = [
+        ("Управление", [.hotkeys, .behavior, .apps]),
+        ("Словарь",    [.exceptions, .rules, .ai]),
+        ("Прочее",     [.stats, .maintenance, .updates, .about]),
+    ]
 }
 
 struct SettingsRoot: View {
@@ -54,34 +96,111 @@ struct SettingsRoot: View {
             HeroHeader(enabled: $settings.enabled)
                 .ignoresSafeArea(edges: .top)
 
-            Divider()
-
-            TabView(selection: $host.selection) {
-                HotkeysTab()
-                    .tabItem { Label("Хоткеи", systemImage: "keyboard") }
-                    .tag(SettingsTab.hotkeys)
-                BehaviorTab()
-                    .tabItem { Label("Поведение", systemImage: "slider.horizontal.3") }
-                    .tag(SettingsTab.behavior)
-                AITab()
-                    .tabItem { Label("AI", systemImage: "wand.and.stars") }
-                    .tag(SettingsTab.ai)
-                ExceptionsTab()
-                    .tabItem { Label("Исключения", systemImage: "list.bullet.rectangle") }
-                    .tag(SettingsTab.exceptions)
-                RulesTab()
-                    .tabItem { Label("Правила", systemImage: "checklist") }
-                    .tag(SettingsTab.rules)
-                UpdatesTab()
-                    .tabItem { Label("Обновления", systemImage: "arrow.down.circle") }
-                    .tag(SettingsTab.updates)
-                AboutTab()
-                    .tabItem { Label("О программе", systemImage: "info.circle") }
-                    .tag(SettingsTab.about)
+            // Боковой список вместо вкладок: десять разделов в строку не помещались
+            // и названия обрезались до «Хотк…».
+            HStack(spacing: 0) {
+                sidebar
+                Divider()
+                VStack(alignment: .leading, spacing: 0) {
+                    sectionHeader
+                    Divider()
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
             }
-            .padding(.top, 8)
         }
-        .frame(width: 640, height: 540)
+        .frame(minWidth: 720, minHeight: 520)
+    }
+
+    private var sidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(SettingsTab.groups, id: \.title) { group in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(group.title.uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .tracking(0.6)
+                            .padding(.horizontal, 18)
+                            .padding(.bottom, 4)
+                        ForEach(group.items, id: \.self) { tab in
+                            SidebarRow(tab: tab, selected: host.selection == tab) {
+                                withAnimation(.easeOut(duration: 0.12)) { host.selection = tab }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        .frame(width: 194)
+        .background(.regularMaterial)
+    }
+
+    private var sectionHeader: some View {
+        HStack(spacing: 9) {
+            Image(systemName: host.selection.icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.tint)
+            Text(host.selection.title)
+                .font(.system(size: 15, weight: .semibold))
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 13)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch host.selection {
+        case .hotkeys:     HotkeysTab()
+        case .behavior:    BehaviorTab()
+        case .apps:        AppsTab()
+        case .ai:          AITab()
+        case .exceptions:  ExceptionsTab()
+        case .rules:       RulesTab()
+        case .stats:       StatsTab()
+        case .maintenance: MaintenanceTab()
+        case .updates:     UpdatesTab()
+        case .about:       AboutTab()
+        }
+    }
+}
+
+private struct SidebarRow: View {
+    let tab: SettingsTab
+    let selected: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 17)
+                    .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.tint))
+                Text(tab.title)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .foregroundColor(selected ? .white : .primary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? AnyShapeStyle(Color.accentColor)
+                                   : AnyShapeStyle(hovering ? Color.secondary.opacity(0.16) : .clear))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -109,20 +228,25 @@ private struct HeroHeader: View {
                 startPoint: .top, endPoint: .bottom
             )
 
-            HStack(alignment: .center, spacing: 14) {
+            HStack(alignment: .center, spacing: 13) {
                 logoView()
-                    .frame(width: 56, height: 56)
+                    .frame(width: 46, height: 46)
                     .hueRotation(enabled ? logoHue : .zero)
                     .saturation(enabled ? 1.0 : 0.0)
                     .opacity(enabled ? 1.0 : 0.6)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("KEYSWITCHER")
-                        .font(.system(size: 18, weight: .heavy))
-                        .tracking(1.4)
+                        .font(.system(size: 16, weight: .heavy))
+                        .tracking(1.2)
                         .foregroundColor(.white)
-                    Text(enabled ? "Активно" : "Выключено")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.85))
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(enabled ? Color.white : Color.white.opacity(0.5))
+                            .frame(width: 5, height: 5)
+                        Text(enabled ? "Активно" : "Выключено")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.9))
+                    }
                 }
                 Spacer()
                 Toggle("", isOn: $enabled)
@@ -130,11 +254,14 @@ private struct HeroHeader: View {
                     .controlSize(.large)
                     .labelsHidden()
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 28)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 20)
+            .padding(.top, 26)
+            .padding(.bottom, 12)
         }
-        .frame(height: 110)
+        .frame(height: 96)
+        // Тонкая тень вместо резкой границы: под шапкой начинается материал сайдбара.
+        .shadow(color: .black.opacity(0.16), radius: 5, y: 1)
+        .zIndex(1)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.4)) {
@@ -212,6 +339,16 @@ struct HotkeysTab: View {
                     binding: Binding(
                         get: { settings.hotkeys.polishText },
                         set: { settings.hotkeys.polishText = $0 }
+                    ),
+                    allowsModifierOnly: true
+                )
+                HotkeyRow(
+                    title: "Причесать текст",
+                    subtitle: "Причесать текст: тире, кавычки, лишние пробелы",
+                    icon: "textformat.abc.dottedunderline",
+                    binding: Binding(
+                        get: { settings.hotkeys.typography },
+                        set: { settings.hotkeys.typography = $0 }
                     ),
                     allowsModifierOnly: true
                 )
@@ -630,6 +767,32 @@ struct AITab: View {
                     Toggle("", isOn: $settings.aiEnabled).labelsHidden()
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Показывать результат до замены", isOn: $settings.polishPreview)
+                    Text("Покажет, что получилось, и спросит — применять или нет. Без этого правка встаёт сразу, а передумать можно левым Option в течение 5 секунд.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Toggle("Типографику расставлять самому", isOn: $settings.typographyBeforeAI)
+                    Text("Тире, кавычки и лишние пробелы поправим сами — это быстро и всегда одинаково. AI останется то, что требует понимания.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 20)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Запасные адреса")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Если основной адрес не отвечает, попробуем эти — по очереди. В России сервис часто недоступен, и запасной адрес выручает без VPN. Пиши по одному в строке.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    MirrorsEditor()
+                }
+                .padding(.horizontal, 20)
+
                 Divider().padding(.vertical, 4)
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -721,6 +884,7 @@ struct AITab: View {
             }
             .padding(20)
         }
+        .onAppear { settings.ensureApiKeyLoaded() }
     }
 }
 
@@ -1062,5 +1226,36 @@ final class HotkeyRecorderNSView: NSView {
         case 59, 62: return flags.contains(.control)
         default: return false
         }
+    }
+}
+
+
+/// Черновик держим отдельно: разбор на строки прямо в биндинге съедал перенос,
+/// и ввести второй адрес было невозможно.
+private struct MirrorsEditor: View {
+    @ObservedObject private var settings = Settings.shared
+    @State private var draft = ""
+    @State private var loaded = false
+
+    var body: some View {
+        TextEditor(text: $draft)
+            .font(.system(size: 11, design: .monospaced))
+            .frame(height: 52)
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
+            .onAppear {
+                guard !loaded else { return }
+                loaded = true
+                draft = settings.aiMirrorURLs.joined(separator: "\n")
+            }
+            .onChange(of: draft) { _ in commit() }
+            .onDisappear { commit() }
+    }
+
+    private func commit() {
+        let parsed = draft
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if parsed != settings.aiMirrorURLs { settings.aiMirrorURLs = parsed }
     }
 }

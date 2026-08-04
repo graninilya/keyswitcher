@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// AX вместо симуляции Cmd+C: иначе в Word/Pages/Notes Cmd+C без выделения
 /// копирует всю текущую строку — и мы получаем ложное «выделение».
@@ -8,19 +9,25 @@ struct SelectionInfo {
     let length: Int
     /// nil если приложение не отдаёт.
     let totalCharacters: Int?
-
-    /// Когда AX в Electron/etc врёт что выделена вся строка — totalCharacters == length,
-    /// это ненадёжный сигнал и мы не считаем его partial.
-    var isPartial: Bool {
-        guard let total = totalCharacters else { return true }
-        return length < total
-    }
 }
 
 enum SelectionDetector {
 
+    /// Буфер набора защищён отдельно, а этот путь читает текст напрямую из поля —
+    /// без такой же проверки пароль утёк бы через выделение.
+    static var isSecureFieldFocused: Bool { SecureInput.isEnabled }
+
+    /// AX-запрос синхронный: без ограничения зависшее приложение в фокусе
+    /// подвесило бы хоткей вместе с собой.
+    private static let messagingTimeout: Float = 0.25
+
     static func currentSelectionInfo() -> SelectionInfo? {
+        guard !isSecureFieldFocused else {
+            Log.selection.info("secure input активен — выделение не читаем")
+            return nil
+        }
         let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, messagingTimeout)
 
         var focusedRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -29,6 +36,7 @@ enum SelectionDetector {
             return nil
         }
         let element = focusedRef as! AXUIElement
+        AXUIElementSetMessagingTimeout(element, messagingTimeout)
 
         var rangeRef: CFTypeRef?
         let rRange = AXUIElementCopyAttributeValue(
@@ -59,7 +67,7 @@ enum SelectionDetector {
             total = n
         }
 
-        Log.selection.info("range loc=\(range.location) len=\(range.length) total=\(String(describing: total), privacy: .public) text='\(text, privacy: .public)'")
+        Log.selection.info("range loc=\(range.location) len=\(range.length) total=\(String(describing: total), privacy: .public) text='\(Log.redact(text), privacy: .public)'")
         return SelectionInfo(text: text, length: range.length, totalCharacters: total)
     }
 
@@ -68,13 +76,19 @@ enum SelectionDetector {
     }
 
     static func expandToParagraphAndReturnText() -> String? {
+        guard !isSecureFieldFocused else {
+            Log.selection.info("secure input активен — параграф не читаем")
+            return nil
+        }
         let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, messagingTimeout)
 
         var focusedRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             system, kAXFocusedUIElementAttribute as CFString, &focusedRef
         ) == .success, focusedRef != nil else { return nil }
         let element = focusedRef as! AXUIElement
+        AXUIElementSetMessagingTimeout(element, messagingTimeout)
 
         var valueRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -140,48 +154,5 @@ enum SelectionDetector {
         }
 
         return ns.substring(with: NSRange(location: paraStart, length: paraEnd - paraStart))
-    }
-
-    private static func _legacyCurrentSelectedText_unused() -> String? {
-        let system = AXUIElementCreateSystemWide()
-
-        var focusedRef: CFTypeRef?
-        let r1 = AXUIElementCopyAttributeValue(
-            system, kAXFocusedUIElementAttribute as CFString, &focusedRef
-        )
-        guard r1 == .success, focusedRef != nil else {
-            Log.selection.info("focus query failed: \(r1.rawValue, privacy: .public)")
-            return nil
-        }
-        let element = focusedRef as! AXUIElement
-
-        var rangeRef: CFTypeRef?
-        let r2 = AXUIElementCopyAttributeValue(
-            element, kAXSelectedTextRangeAttribute as CFString, &rangeRef
-        )
-        if r2 == .success, let raw = rangeRef, CFGetTypeID(raw) == AXValueGetTypeID() {
-            let axValue = raw as! AXValue
-            var range = CFRange(location: 0, length: 0)
-            if AXValueGetValue(axValue, .cfRange, &range) {
-                Log.selection.info("range loc=\(range.location) len=\(range.length)")
-                if range.length == 0 {
-                    return nil
-                }
-            }
-        } else {
-            Log.selection.info("range query failed: \(r2.rawValue, privacy: .public) — bail")
-            return nil
-        }
-
-        var selected: CFTypeRef?
-        let r3 = AXUIElementCopyAttributeValue(
-            element, kAXSelectedTextAttribute as CFString, &selected
-        )
-        guard r3 == .success, let text = selected as? String, !text.isEmpty else {
-            Log.selection.info("text query failed or empty: \(r3.rawValue, privacy: .public)")
-            return nil
-        }
-        Log.selection.info("got selected text: '\(text, privacy: .public)' (\(text.count) chars)")
-        return text
     }
 }

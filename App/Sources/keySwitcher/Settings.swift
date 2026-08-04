@@ -12,23 +12,26 @@ struct HotkeyConfig: Codable {
     var transliterate: HotkeyBinding
     var toggleEnabled: HotkeyBinding
     var polishText: HotkeyBinding
+    var typography: HotkeyBinding
 
     init(
         smartConvert: HotkeyBinding,
         forceSwap: HotkeyBinding,
         transliterate: HotkeyBinding,
         toggleEnabled: HotkeyBinding = .disabled,
-        polishText: HotkeyBinding = .modifier(ModifierHotkey.rightOption)
+        polishText: HotkeyBinding = .modifier(ModifierHotkey.rightOption),
+        typography: HotkeyBinding = .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 35))
     ) {
         self.smartConvert = smartConvert
         self.forceSwap = forceSwap
         self.transliterate = transliterate
         self.toggleEnabled = toggleEnabled
         self.polishText = polishText
+        self.typography = typography
     }
 
     enum CodingKeys: String, CodingKey {
-        case smartConvert, forceSwap, transliterate, toggleEnabled, polishText
+        case smartConvert, forceSwap, transliterate, toggleEnabled, polishText, typography
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +42,8 @@ struct HotkeyConfig: Codable {
         self.toggleEnabled = try c.decodeIfPresent(HotkeyBinding.self, forKey: .toggleEnabled) ?? .disabled
         self.polishText = try c.decodeIfPresent(HotkeyBinding.self, forKey: .polishText)
             ?? .modifier(ModifierHotkey.rightOption)
+        self.typography = try c.decodeIfPresent(HotkeyBinding.self, forKey: .typography)
+            ?? .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 35))
     }
 
     static let `default` = HotkeyConfig(
@@ -46,7 +51,8 @@ struct HotkeyConfig: Codable {
         forceSwap:    .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 3)),
         transliterate: .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 17)),
         toggleEnabled: .disabled,
-        polishText: .modifier(ModifierHotkey.rightOption)
+        polishText: .modifier(ModifierHotkey.rightOption),
+        typography: .combo(KeyCombo(modifiers: [.option, .shift], keyCode: 35))
     )
 }
 
@@ -113,6 +119,7 @@ final class Settings: ObservableObject {
     @Published var soundName: String {
         didSet {
             UserDefaults.standard.set(soundName, forKey: "soundName")
+            SoundFeedback.invalidateCache()
             SoundFeedback.preview()
         }
     }
@@ -157,25 +164,85 @@ final class Settings: ObservableObject {
     @Published var aiWorkerURL: String {
         didSet { UserDefaults.standard.set(aiWorkerURL, forKey: "aiWorkerURL") }
     }
+    /// Запасные адреса — пробуются по очереди, если основной молчит. Домен
+    /// основного сервиса в России нередко заблокирован, и зеркало выручает.
+    @Published var aiMirrorURLs: [String] {
+        didSet { UserDefaults.standard.set(aiMirrorURLs, forKey: "aiMirrorURLs") }
+    }
     @Published var aiModel: String {
         didSet { UserDefaults.standard.set(aiModel, forKey: "aiModel") }
     }
     @Published var aiEnabled: Bool {
         didSet { UserDefaults.standard.set(aiEnabled, forKey: "aiEnabled") }
     }
+    /// Показывать «было → стало» до замены. По умолчанию выключено: подтверждение
+    /// каждой правки — лишний шаг, а от неудачного результата уже защищает откат
+    /// левым Option в течение 5 секунд.
+    @Published var polishPreview: Bool {
+        didSet { UserDefaults.standard.set(polishPreview, forKey: "polishPreview") }
+    }
+    /// Тире, ёлочки и пробелы расставляем сами — модели остаётся смысловая часть.
+    @Published var typographyBeforeAI: Bool {
+        didSet { UserDefaults.standard.set(typographyBeforeAI, forKey: "typographyBeforeAI") }
+    }
 
     @Published var customApiEndpoint: String {
         didSet { UserDefaults.standard.set(customApiEndpoint, forKey: "customApiEndpoint") }
     }
     @Published var customApiKey: String {
-        didSet { UserDefaults.standard.set(customApiKey, forKey: "customApiKey") }
+        didSet {
+            guard apiKeyLoaded else { return }   // не затирать хранилище значением-заглушкой
+            KeychainStore.write(customApiKey, account: Settings.apiKeyAccount)
+        }
+    }
+    static let apiKeyAccount = "customApiKey"
+
+    private var apiKeyLoaded = false
+
+    /// Читается при первом обращении: на старте связка ключей может ждать
+    /// разблокировки, и приложение подвисало бы ещё до появления в строке меню.
+    ///
+    /// Только с главного потока: customApiKey — @Published, а публикация из фонового
+    /// ломает SwiftUI и гонится с чтением из LLMPolisher.
+    ///
+    /// Флаг ставим лишь при внятном ответе хранилища. Заблокированная связка —
+    /// не «ключа нет», и защёлкнуть это состояние на всю сессию нельзя.
+    func ensureApiKeyLoaded() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.sync { self.ensureApiKeyLoaded() }
+            return
+        }
+        guard !apiKeyLoaded else { return }
+
+        let status = KeychainStore.readStatus(Settings.apiKeyAccount)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            Log.clipboard.error("связка ключей недоступна (\(status, privacy: .public)) — повторю позже")
+            return
+        }
+        apiKeyLoaded = true
+
+        if status == errSecSuccess, let stored = KeychainStore.read(Settings.apiKeyAccount), !stored.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "customApiKey")
+            customApiKey = stored
+            return
+        }
+        // Из UserDefaults старое значение удаляем только после успешной записи
+        // в связку — иначе сбой записи стоил бы пользователю ключа.
+        let legacy = UserDefaults.standard.string(forKey: "customApiKey") ?? ""
+        guard !legacy.isEmpty else { return }
+        if KeychainStore.write(legacy, account: Settings.apiKeyAccount) {
+            UserDefaults.standard.removeObject(forKey: "customApiKey")
+            Log.clipboard.info("API-ключ перенесён в связку ключей")
+        }
+        customApiKey = legacy
     }
     @Published var customApiModel: String {
         didSet { UserDefaults.standard.set(customApiModel, forKey: "customApiModel") }
     }
 
     var useCustomAPI: Bool {
-        !customApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ensureApiKeyLoaded()
+        return !customApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !customApiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -208,10 +275,15 @@ final class Settings: ObservableObject {
         self.pendingReverts = (d.dictionary(forKey: "pendingReverts") as? [String: Int]) ?? [:]
         self.pendingForceSwap = (d.dictionary(forKey: "pendingForceSwap") as? [String: Int]) ?? [:]
         self.aiWorkerURL = d.string(forKey: "aiWorkerURL") ?? Settings.defaultWorkerURL
+        self.aiMirrorURLs = d.stringArray(forKey: "aiMirrorURLs") ?? []
         self.aiModel = d.string(forKey: "aiModel") ?? Settings.defaultAIModel
         self.aiEnabled = d.object(forKey: "aiEnabled") as? Bool ?? true
+        self.polishPreview = d.object(forKey: "polishPreview") as? Bool ?? false
+        self.typographyBeforeAI = d.object(forKey: "typographyBeforeAI") as? Bool ?? true
         self.customApiEndpoint = d.string(forKey: "customApiEndpoint") ?? ""
-        self.customApiKey = d.string(forKey: "customApiKey") ?? ""
+        // Пустая строка на старте: связка ключей читается лениво, при первом обращении.
+        // Обращение к ней на запуске может ждать разблокировки и подвешивает старт.
+        self.customApiKey = ""
         self.customApiModel = d.string(forKey: "customApiModel") ?? ""
     }
 

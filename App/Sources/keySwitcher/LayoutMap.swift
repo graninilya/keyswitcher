@@ -20,19 +20,12 @@ final class LayoutMap {
     private let ruToEn: [Character: Character]
     private var wordsRu: Set<String>
     private var wordsEn: Set<String>
-    private let badLatin: Set<String>
-    private let badCyrillic: Set<String>
-    private let badLatinLengths: [Int]
-    private let badCyrillicLengths: [Int]
     private let trigramsRu: [String: Double]
     private let trigramsEn: [String: Double]
-    /// Среднее лог-вероятностей триграмм. Пропуски штрафуются `missingTrigramPenalty`.
-    /// Слова из реального языка обычно даёт −5…−15. Случайный мусор ≤ −20.
-    private let plausibilityThreshold: Double = -20.0
     private let missingTrigramPenalty: Double = -20.0
 
     private init() {
-        let standardLayout: LayoutFile = LayoutMap.load("layout_map")
+        let standardLayout: LayoutFile = LayoutMap.load("layout_map", fallback: LayoutFile(en_to_ru: [:], ru_to_en: [:]))
         let standardEnToRu = LayoutMap.charMap(standardLayout.en_to_ru)
         let standardRuToEn = LayoutMap.charMap(standardLayout.ru_to_en)
 
@@ -46,24 +39,13 @@ final class LayoutMap {
             self.ruToEn = standardRuToEn
         }
 
-        for k: Character in [".", ",", ";", "[", "]", "'", "`", "\\", "/"] {
-            let mapped = self.enToRu[k].map(String.init) ?? "<no>"
-            Log.detector.info("  EN '\(String(k), privacy: .public)' → RU '\(mapped, privacy: .public)'")
-        }
-
-        let ruWords: [String] = LayoutMap.load("words_ru")
-        let enWords: [String] = LayoutMap.load("words_en")
+        let ruWords: [String] = LayoutMap.load("words_ru", fallback: [])
+        let enWords: [String] = LayoutMap.load("words_en", fallback: [])
         self.wordsRu = Set(ruWords)
         self.wordsEn = Set(enWords)
 
-        let triggers: TriggersFile = LayoutMap.load("bad_ngrams")
-        self.badLatin = Set(triggers.latin)
-        self.badCyrillic = Set(triggers.cyrillic)
-        self.badLatinLengths = Array(Set(triggers.latin.map { $0.count })).sorted()
-        self.badCyrillicLengths = Array(Set(triggers.cyrillic.map { $0.count })).sorted()
-
-        self.trigramsRu = LayoutMap.load("trigrams_ru")
-        self.trigramsEn = LayoutMap.load("trigrams_en")
+        self.trigramsRu = LayoutMap.load("trigrams_ru", fallback: [:])
+        self.trigramsEn = LayoutMap.load("trigrams_en", fallback: [:])
 
         // Разговорные слова и заимствования, которых нет в hunspell base forms
         let extraRu: Set<String> = [
@@ -87,23 +69,6 @@ final class LayoutMap {
 
     func isValidEnglish(_ word: String) -> Bool {
         wordsEn.contains(word.lowercased())
-    }
-
-    /// True если swap слова в целевой язык сильно убедительнее по триграммам.
-    /// Используется ретро-цепочкой для отсева ложноположительных типа `ok` → `ок`.
-    func swapIsMuchBetter(_ word: String, targetCyrillic: Bool, margin: Double = 1.5) -> Bool {
-        let swap = self.swap(word).lowercased()
-        let original = word.lowercased()
-        let originalScore: Double
-        let swapScore: Double
-        if targetCyrillic {
-            originalScore = trigramPlausibility(original, table: trigramsEn)
-            swapScore = trigramPlausibility(swap, table: trigramsRu)
-        } else {
-            originalScore = trigramPlausibility(original, table: trigramsRu)
-            swapScore = trigramPlausibility(swap, table: trigramsEn)
-        }
-        return swapScore > originalScore + margin
     }
 
     /// Знаки которые одинаковы в обеих раскладках по смыслу — не маппим даже если
@@ -196,22 +161,6 @@ final class LayoutMap {
         return ("а"..."я").contains(c) || c == "ё" || ("А"..."Я").contains(c) || c == "Ё"
     }
 
-    func detectAndConvert(_ text: String) -> ConversionResult {
-        let candidate = swap(text)
-        let originalScore = score(text)
-        let candidateScore = score(candidate)
-
-        if candidateScore > originalScore + 0.15 {
-            return .converted(candidate)
-        }
-        return .unchanged
-    }
-
-    enum ConversionResult {
-        case converted(String)
-        case unchanged
-    }
-
     func autoConvert(_ word: String) -> String? {
         let lower = word.lowercased()
 
@@ -237,8 +186,23 @@ final class LayoutMap {
 
         guard lower.count >= 2 else { return nil }
 
-        let isLatin = lower.allSatisfy { ("a"..."z").contains($0) }
-        let isCyrillic = lower.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" }
+        // Дефис одинаков в обеих раскладках и алфавиту не принадлежит — иначе
+        // «что-то» и «xnj-nj» уходили в ветку смешанного текста и не исправлялись.
+        //
+        // Но только ВНУТРЕННИЙ дефис между непустыми частями. Ведущий дефис — это
+        // ключ командной строки (`-rf`, `--force`), и трактовать его как букву
+        // нельзя: `rm -rf` превращался бы в `rm -ка`.
+        let hasHyphen = lower.contains("-")
+        let hyphenIsInterior: Bool = {
+            guard hasHyphen else { return false }
+            let parts = lower.split(separator: "-", omittingEmptySubsequences: false)
+            return parts.count >= 2 && parts.allSatisfy { !$0.isEmpty }
+        }()
+        let letterOrHyphen: (Character) -> Bool = { ch in
+            hyphenIsInterior && ch == "-"
+        }
+        let isLatin = lower.allSatisfy { ("a"..."z").contains($0) || letterOrHyphen($0) }
+        let isCyrillic = lower.allSatisfy { ("а"..."я").contains($0) || $0 == "ё" || letterOrHyphen($0) }
 
         if !isLatin && !isCyrillic {
             let lettersLat = String(lower.filter { ("a"..."z").contains($0) })
@@ -305,8 +269,8 @@ final class LayoutMap {
             return nil
         }
 
-        if isLatin && wordsEn.contains(lower) { return nil }
-        if isCyrillic && wordsRu.contains(lower) { return nil }
+        if isLatin && isKnown(lower, in: wordsEn) { return nil }
+        if isCyrillic && isKnown(lower, in: wordsRu) { return nil }
 
         // Сравнительный триграммный фильтр: «куда лучше укладывается слово».
         // - буквы (ru=-13) vs ,erds (en=-15.5)         → ru лучше → keep
@@ -330,10 +294,37 @@ final class LayoutMap {
         return candidate
     }
 
+    /// Составное слово известно, если известно целиком или известны все его части:
+    /// `что-то` в словаре может не быть, а `что` и `то` — есть.
+    ///
+    /// Односимвольные части (`e-mail`, `x-ray`) не мешают: проверяем только те,
+    /// что длиннее буквы, иначе слово теряло бы словарную защиту и решалось
+    /// одними триграммами.
+    private func isKnown(_ word: String, in dictionary: Set<String>) -> Bool {
+        if dictionary.contains(word) { return true }
+        guard word.contains("-") else { return false }
+        let parts = word.split(separator: "-").map(String.init)
+        guard parts.count >= 2 else { return false }
+        let significant = parts.filter { $0.count >= 2 }
+        guard !significant.isEmpty else { return false }
+        return significant.allSatisfy { dictionary.contains($0) }
+    }
+
     /// Среднее лог-вероятностей триграмм (с " " по краям).
     /// Высокий результат = слово выглядит «как настоящее» в данном языке —
     /// покрывает падежи/спряжения которых нет в плоском словаре.
+    ///
+    /// Составное слово считается по частям: триграмм с дефисом в таблице нет,
+    /// и штраф за них исказил бы сравнение.
     private func trigramPlausibility(_ word: String, table: [String: Double]) -> Double {
+        guard word.contains("-") else { return rawTrigramPlausibility(word, table: table) }
+        let parts = word.split(separator: "-").map(String.init).filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return -.infinity }
+        let scores = parts.map { rawTrigramPlausibility($0, table: table) }
+        return scores.reduce(0, +) / Double(scores.count)
+    }
+
+    private func rawTrigramPlausibility(_ word: String, table: [String: Double]) -> Double {
         let padded = " " + word.lowercased() + " "
         let chars = Array(padded)
         guard chars.count >= 3 else { return -.infinity }
@@ -347,49 +338,9 @@ final class LayoutMap {
         return count > 0 ? sum / Double(count) : -.infinity
     }
 
-    /// Длинные подстроки весят больше — они более дискриминативны (3→1, 4→2, 5→3, 6→4).
-    private func weightedBadScore(in word: String, triggers: Set<String>) -> Int {
-        let chars = Array(word)
-        var score = 0
-        for L in 3...6 where L <= chars.count {
-            let weight = L - 2
-            let limit = chars.count - L
-            for start in 0...limit {
-                let sub = String(chars[start..<(start + L)])
-                if triggers.contains(sub) {
-                    score += weight
-                }
-            }
-        }
-        return score
-    }
-
-    private func score(_ text: String) -> Double {
-        let tokens = text
-            .lowercased()
-            .split(whereSeparator: { !$0.isLetter })
-            .map(String.init)
-            .filter { $0.count >= 2 }
-
-        guard !tokens.isEmpty else { return 0 }
-
-        var hits = 0
-        for w in tokens {
-            if wordsRu.contains(w) || wordsEn.contains(w) {
-                hits += 1
-            }
-        }
-        return Double(hits) / Double(tokens.count)
-    }
-
     private struct LayoutFile: Decodable {
         let en_to_ru: [String: String]
         let ru_to_en: [String: String]
-    }
-
-    private struct TriggersFile: Decodable {
-        let latin: [String]
-        let cyrillic: [String]
     }
 
     /// Если primary мапит пунктуацию на пунктуацию вместо буквы — берём fallback.
@@ -418,11 +369,19 @@ final class LayoutMap {
         return out
     }
 
-    private static func load<T: Decodable>(_ name: String) -> T {
+    /// Потеря словаря при сборке роняла приложение на старте. Деградируем вместо краша:
+    /// без словаря детектор просто консервативнее, а приложение остаётся живым.
+    private static func load<T: Decodable>(_ name: String, fallback: T) -> T {
         guard let url = Bundle.main.url(forResource: name, withExtension: "json") else {
-            fatalError("Resource \(name).json not found in Bundle.main")
+            Log.detector.error("ресурс \(name, privacy: .public).json не найден — работаю без него")
+            return fallback
         }
-        let data = try! Data(contentsOf: url)
-        return try! JSONDecoder().decode(T.self, from: data)
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            Log.detector.error("ресурс \(name, privacy: .public).json не читается: \(error.localizedDescription, privacy: .public)")
+            return fallback
+        }
     }
 }

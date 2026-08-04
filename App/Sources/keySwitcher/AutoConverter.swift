@@ -34,25 +34,30 @@ final class AutoConverter {
 
     private var lastReplacement: Replacement?
     private let toggleWindow: TimeInterval = 5.0
+    private let antiResonance = AntiResonanceGuard()
+
+    private var installed = false
 
     private init() {}
 
     func install() {
+        guard !installed else { return }
+        installed = true
         KeystrokeBuffer.shared.onWordCompleted = { [weak self] word, trigger in
             self?.handleWordCompleted(word: word, trigger: trigger)
         }
+        // Обычно синтетика сюда не доходит — её отсеивает EventMonitor по метке.
+        // Но в запасном режиме (метка не работает) фильтра нет, и наши же backspace'ы
+        // сбрасывали бы lastReplacement, из-за чего откат по ⌥ перестал бы срабатывать.
         EventMonitor.shared.onKeyDown { [weak self] _ in
-            guard let self = self else { return }
-            // KeystrokeBuffer.muted = идёт наша же синтетическая инъекция (backspace+type).
-            // Только настоящие пользовательские key-events должны сбрасывать lastReplacement.
-            if !KeystrokeBuffer.shared.muted {
-                self.lastReplacement = nil
-            }
+            guard !KeystrokeBuffer.shared.muted else { return }
+            self?.lastReplacement = nil
         }
         // Клик мышью = пользователь сдвинул каретку или сделал новое выделение.
         // Старый toggle становится бессмысленным — applyState затёр бы текст у нового курсора.
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             self?.lastReplacement = nil
+            self?.antiResonance.reset()
         }
         // Смена активного приложения = почти наверняка новый контекст ввода.
         NotificationCenter.default.addObserver(
@@ -60,21 +65,36 @@ final class AutoConverter {
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.lastReplacement = nil
+            self?.antiResonance.reset()
         }
     }
 
     private func handleWordCompleted(word: String, trigger: Character) {
         guard Settings.shared.enabled else {
-            Log.auto.info("disabled, skip word='\(word, privacy: .public)'")
+            Log.auto.info("disabled, skip word='\(Log.redact(word), privacy: .public)'")
             return
         }
         guard Settings.shared.autoConvertEnabled else {
-            Log.auto.info("autoConvert disabled, skip word='\(word, privacy: .public)'")
+            Log.auto.info("autoConvert disabled, skip word='\(Log.redact(word), privacy: .public)'")
+            return
+        }
+        guard !PauseController.shared.isPaused else { return }
+        // В терминалах и IDE «слово» — это чаще команда или идентификатор,
+        // поэтому там автозамена по умолчанию молчит, а хоткеи работают.
+        guard AppRules.shared.currentMode == .normal else {
+            Log.auto.info("режим приложения \(AppRules.shared.currentMode.rawValue, privacy: .public) — автозамена пропущена")
+            return
+        }
+        // До завершения прогрева обращение к LayoutMap запустило бы разбор словарей
+        // прямо в колбэке tap. Пропускаем слово — это доли секунды после запуска.
+        guard Warm.isReady else {
+            Log.auto.info("прогрев не завершён, слово пропущено")
             return
         }
         let result = LayoutMap.shared.autoConvert(word)
-        Log.auto.info("word='\(word, privacy: .public)' → \(String(describing: result), privacy: .public)")
+        Log.auto.info("word='\(Log.redact(word), privacy: .public)' → \(result == nil ? "keep" : "convert", privacy: .public)")
         guard let converted = result else { return }
+        guard antiResonance.allow(from: word, to: converted) else { return }
 
         let savedLayout = InputSourceSwitcher.current()
         let buffer = KeystrokeBuffer.shared
@@ -99,7 +119,7 @@ final class AutoConverter {
 
         if !retroChain.isEmpty {
             for r in retroChain {
-                Log.auto.info("retro: '\(r.orig, privacy: .public)' → '\(r.conv, privacy: .public)'")
+                Log.auto.info("retro: '\(Log.redact(r.orig), privacy: .public)' → '\(Log.redact(r.conv), privacy: .public)'")
             }
             let prevDelete = retroChain.reduce(0) { $0 + $1.orig.count + 1 }
             let toDelete = prevDelete + word.count + 1
@@ -115,9 +135,13 @@ final class AutoConverter {
                 buffer.replaceFromEnd(offset: offsetFromEnd, with: r.conv)
             }
             buffer.replaceLastInHistory(with: converted)
+            Stats.shared.noteAutoConversion(retroWords: retroChain.count)
+            History.shared.add(original: word, converted: converted, kind: .retro)
         } else {
             applyState(.converted)
             buffer.replaceLastInHistory(with: converted)
+            Stats.shared.noteAutoConversion()
+            History.shared.add(original: word, converted: converted, kind: .auto)
         }
     }
 
@@ -215,10 +239,14 @@ final class AutoConverter {
     func toggle() {
         guard let last = lastReplacement else { return }
         let target: DisplayState = (last.state == .converted) ? .original : .converted
+        if target == .original {
+            Stats.shared.noteRevert()
+            History.shared.add(original: last.converted, converted: last.original, kind: .revert)
+        }
         if target == .original, last.isAutomatic {
             let promoted = Settings.shared.recordRevert(last.original)
             let count = Settings.shared.pendingReverts[last.original.lowercased()] ?? 0
-            Log.auto.info("revert '\(last.original, privacy: .public)' (count=\(count) promoted=\(promoted))")
+            Log.auto.info("revert '\(Log.redact(last.original), privacy: .public)' (count=\(count) promoted=\(promoted))")
         }
         applyState(target)
     }
@@ -242,6 +270,10 @@ final class AutoConverter {
 
         last.state = target
         last.lastChangeTime = Date()
+
+        // Экран переписан — модель обязана это отразить, иначе следующий ⌥ посчитает
+        // удаление по тексту, которого там уже нет.
+        KeystrokeBuffer.shared.syncAfterExternalReplacement(word: targetText, tail: tail)
     }
 
     private func sendBackspaces(_ count: Int) {

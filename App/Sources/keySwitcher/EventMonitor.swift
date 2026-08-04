@@ -7,8 +7,11 @@ final class EventMonitor {
     typealias KeyHandler = (CGEvent) -> Void
     typealias FlagsHandler = (CGEvent) -> Void
 
-    private var keyHandlers: [UUID: KeyHandler] = [:]
-    private var flagsHandlers: [UUID: FlagsHandler] = [:]
+    /// Массив, а не словарь: порядок обхода словаря не определён, а обработчики
+    /// не независимы — буфер должен обновиться раньше тех, кто читает его состояние.
+    /// Порядок = порядок регистрации в AppDelegate.startMonitorsOrPoll().
+    private var keyHandlers: [(id: UUID, run: KeyHandler)] = []
+    private var flagsHandlers: [(id: UUID, run: FlagsHandler)] = []
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -49,6 +52,11 @@ final class EventMonitor {
 
         self.tap = newTap
         self.runLoopSource = source
+        // Живой пробник для меню: «работает ли перехват сейчас», а не «стартовал когда-то».
+        AppHealth.isEngineLive = { [weak self] in
+            guard let t = self?.tap else { return false }
+            return CGEvent.tapIsEnabled(tap: t)
+        }
         return true
     }
 
@@ -62,13 +70,38 @@ final class EventMonitor {
         self.runLoopSource = nil
     }
 
+    /// Система вырубает tap, если колбэк не вернулся вовремя. Инструментуем, чтобы
+    /// увидеть приближение к порогу до того, как начнут теряться нажатия.
+    private static let slowCallbackMs: Double = 15
+
     private func dispatch(type: CGEventType, event: CGEvent) {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        defer {
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            if ms > Self.slowCallbackMs {
+                Log.perf.error("медленный колбэк tap: \(String(format: "%.1f", ms), privacy: .public) мс — риск отключения")
+            }
+        }
+
+        // Наша собственная синтетика (backspace'ы и вставки) возвращается сюда через
+        // .cghidEventTap. Отсеиваем её ДО обработчиков: иначе буфер съедал бы свои же
+        // нажатия, а ModifierHotkeyMonitor помечал бы удерживаемый модификатор как
+        // «загрязнённый» — из-за чего ⌥-хоткей после каждой замены молча не срабатывал.
+        if type == .keyDown || type == .flagsChanged, SyntheticTag.isSynthetic(event) {
+            return
+        }
+
         switch type {
         case .keyDown:
-            for h in keyHandlers.values { h(event) }
+            for h in keyHandlers { h.run(event) }
         case .flagsChanged:
-            for h in flagsHandlers.values { h(event) }
+            for h in flagsHandlers { h.run(event) }
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            let reason = type == .tapDisabledByTimeout ? "таймаут колбэка" : "ввод пользователя"
+            Log.perf.fault("tap отключён системой (\(reason, privacy: .public)) — нажатия за этот промежуток потеряны")
+            // Пока tap был мёртв, нажатия дошли до экрана мимо нас: буфер разошёлся
+            // с реальным текстом, и следующая замена стёрла бы неверное число символов.
+            KeystrokeBuffer.shared.clearContext()
             if let tap = tap { CGEvent.tapEnable(tap: tap, enable: true) }
         default:
             break
@@ -78,20 +111,20 @@ final class EventMonitor {
     @discardableResult
     func onKeyDown(_ handler: @escaping KeyHandler) -> UUID {
         let id = UUID()
-        keyHandlers[id] = handler
+        keyHandlers.append((id: id, run: handler))
         return id
     }
 
     @discardableResult
     func onFlagsChanged(_ handler: @escaping FlagsHandler) -> UUID {
         let id = UUID()
-        flagsHandlers[id] = handler
+        flagsHandlers.append((id: id, run: handler))
         return id
     }
 
     func remove(_ id: UUID) {
-        keyHandlers.removeValue(forKey: id)
-        flagsHandlers.removeValue(forKey: id)
+        keyHandlers.removeAll { $0.id == id }
+        flagsHandlers.removeAll { $0.id == id }
     }
 }
 
@@ -111,7 +144,10 @@ final class KeystrokeBuffer {
     /// lastWord/lastTail видит только `ю` + `8`, а юзер хочет свапнуть весь
     /// сегмент → `0.2.8`.
     private(set) var lastSegment: String = ""
-    private(set) var lastActivity: Date = .distantPast
+
+    /// Растёт на каждом реальном нажатии. Отложенная замена сверяется с этим счётчиком,
+    /// чтобы не переписывать текст, который пользователь уже успел продолжить.
+    private(set) var sequence: UInt64 = 0
 
     private var recentWords: [String] = []
     private let recentWordsCapacity = 5
@@ -148,11 +184,37 @@ final class KeystrokeBuffer {
     /// AutoConverter выставляет true чтобы не съедать собственные синтетические нажатия.
     var muted: Bool = false
 
+    private var secureInputWasOn = false
+
+    /// Порог дребезга. Поднимать не следует: съесть настоящую двойную букву хуже,
+    /// чем пропустить дребезг — первое портит текст молча, второе человек видит сам.
+    private static let chatterWindow: CFAbsoluteTime = 0.030
+    private var lastKeyCode: Int = -1
+    private var lastKeyAt: CFAbsoluteTime = 0
+
+    /// Привести модель к тому, что реально на экране после замены, сделанной в обход
+    /// обычного набора (выделение, полировка, откат). Без этого следующая замена
+    /// считает backspace'ы по устаревшему состоянию.
+    func syncAfterExternalReplacement(word: String, tail: String) {
+        lastWord = word
+        lastTail = tail
+        lastTrigger = nil
+        currentWord = ""
+        lastSegment = ""
+        if !recentWords.isEmpty {
+            recentWords[recentWords.count - 1] = word
+        }
+    }
+
     var onWordCompleted: ((String, Character) -> Void)?
 
     private init() {}
 
+    private var installed = false
+
     func install() {
+        guard !installed else { return }
+        installed = true
         EventMonitor.shared.onKeyDown { [weak self] event in
             self?.handle(event: event)
         }
@@ -169,14 +231,36 @@ final class KeystrokeBuffer {
 
     private func handle(event: CGEvent) {
         if muted { return }
-        // В полях паролей буфер не работает — чтобы не утечь пароль через recentWords/lastWord
-        if IsSecureEventInputEnabled() {
-            currentWord = ""
-            return
+        // В полях паролей буфер не работает — чтобы не утечь пароль через recentWords/lastWord.
+        // На обоих переходах чистим целиком: пока шёл ввод пароля, каретка ушла, и
+        // сохранённые lastWord/lastTail описывают текст в другом месте экрана.
+        let secureNow = SecureInput.isEnabled
+        if secureNow != secureInputWasOn {
+            secureInputWasOn = secureNow
+            clearContext()
+            Log.buffer.info("secure input \(secureNow ? "включён" : "выключен", privacy: .public) — буфер очищен")
+        }
+        if secureNow { return }
+
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // Дребезг механической клавиатуры: одно нажатие приходит дважды. 30 мс — это
+        // 33 повтора той же клавиши в секунду, человек так не печатает даже на «сс».
+        // Автоповтор исключаем по флагу события, а не по времени: его интервал
+        // настраивается и попадает в то же окно.
+        if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+            let now = CFAbsoluteTimeGetCurrent()
+            if keyCode == lastKeyCode, now - lastKeyAt < Self.chatterWindow {
+                Log.buffer.info("дребезг: повтор клавиши быстрее \(Int(Self.chatterWindow * 1000)) мс — игнорирую")
+                // Окно НЕ продлеваем: иначе серия быстрых событий глохла бы целиком,
+                // а не только её дубликат.
+                return
+            }
+            lastKeyCode = keyCode
+            lastKeyAt = now
         }
 
-        lastActivity = Date()
-        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        sequence &+= 1
 
         if keyCode == 51 {
             if !currentWord.isEmpty {
@@ -192,26 +276,34 @@ final class KeystrokeBuffer {
             return
         }
 
-        // Стрелки / Forward Delete / Escape — навигация/редактирование, не должны триггерить авто-замену
+        // Стрелки / Forward Delete / Escape — каретка уехала. Чистим ВСЁ, а не только
+        // currentWord: иначе ⌥ посчитает backspace'ы по lastWord/lastTail от прежнего
+        // места и сотрёт чужой текст у нового курсора.
         let arrowKeys: Set<Int> = [123, 124, 125, 126]
         if arrowKeys.contains(keyCode) || keyCode == 117 || keyCode == 53 {
-            currentWord = ""
+            clearContext()
             return
         }
 
-        // Tab / Return — фиксируем lastWord (для ручного хоткея), но без авто-замены
+        // Tab / Return — фиксируем lastWord (для ручного хоткея), но без авто-замены.
+        // Хвост обнуляем: он остался от ПРЕДЫДУЩЕГО слова и на экране к новому не примыкает.
         if keyCode == 48 || keyCode == 36 {
+            // Tab/Return часто и есть переход в поле пароля, а кэш secure-input живёт
+            // короткое время — заставляем перепроверить до следующего символа.
+            SecureInput.forceRecheck()
             if !currentWord.isEmpty {
                 lastWord = currentWord
                 lastTrigger = nil
                 currentWord = ""
             }
+            lastTail = ""
+            lastSegment = ""
             return
         }
 
         let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
-            clear()
+            clearContext()
             return
         }
 
@@ -250,16 +342,27 @@ final class KeystrokeBuffer {
             if recentWords.count > recentWordsCapacity {
                 recentWords.removeFirst()
             }
-            let ctx = self.dominantContext
-            Log.buffer.info("flush: lastWord=\(completed, privacy: .public) trigger=\(String(describing: trigger), privacy: .public) ctx=\(String(describing: ctx), privacy: .public)")
+            // dominantContext здесь не читаем: его AX-ветка делает два синхронных
+            // межпроцессных вызова и копирует весь текст фокусированного поля.
+            // Ради строки лога это неприемлемо.
+            Log.buffer.info("flush: lastWord=\(Log.redact(completed), privacy: .public) trigger=\(Log.redact(trigger), privacy: .public)")
             if let trigger = trigger {
-                onWordCompleted?(completed, trigger)
+                // Замена уходит из колбэка tap: дальше идут словари, TIS-переключение,
+                // звук и десятки синтетических событий. Внутри колбэка это упирается
+                // в системный дедлайн, после которого tap отключают вместе с вводом.
+                let stamp = sequence
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    // Пользователь успел напечатать ещё — слово уже не последнее на
+                    // экране, и backspace'ы стёрли бы не его. Пропустить безопаснее.
+                    guard self.sequence == stamp else {
+                        Log.auto.info("замена отменена: ввод продолжился (Δ\(self.sequence - stamp))")
+                        return
+                    }
+                    self.onWordCompleted?(completed, trigger)
+                }
             }
         }
-    }
-
-    func commitCurrent() {
-        flushAndReset(trigger: nil)
     }
 
     func clear() {
@@ -314,8 +417,11 @@ final class ModifierHotkeyMonitor {
     private var tracking: Tracking?
     private var bindings: [Int: () -> Void] = [:]
     private let timeout: TimeInterval = 0.5
+    private var installed = false
 
     func install() {
+        guard !installed else { return }
+        installed = true
         EventMonitor.shared.onFlagsChanged { [weak self] event in
             self?.handleFlags(event: event)
         }

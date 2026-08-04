@@ -6,14 +6,58 @@ enum LLMPolishError: Error, LocalizedError {
     case http(Int, String)
     case decode(String)
     case network(Error)
+    case unreachable
+
+    /// Короткая формулировка для плашки — её читает человек, а не разработчик.
+    var userMessage: String {
+        switch self {
+        case .disabled:   return "AI выключен — включить можно в настройках"
+        case .emptyText:  return "Тут нечего править"
+        case .unreachable:
+            return "Не могу достучаться до сервиса. В России его часто блокируют — выручает VPN или свой ключ в настройках"
+        case .http(let code, let body):
+            switch code {
+            case 401, 403: return "Ключ не подошёл — проверь его в настройках"
+            case 429:      return "Слишком часто. Подожди чуть-чуть"
+            case 500...599: return "У сервиса неполадки. Попробуй позже"
+            // 0 — наша же проверка настроек, 200 — сервис объяснил отказ сам.
+            // В обоих случаях текст осмысленный, показываем его.
+            case 0, 200:   return String(body.prefix(160))
+            default:       return "Сервис ответил ошибкой \(code)"
+            }
+        case .decode:     return "Пришёл странный ответ — не смог его разобрать"
+        case .network(let e):
+            let ns = e as NSError
+            switch ns.code {
+            case NSURLErrorTimedOut:             return "Ответа так и не дождался"
+            case NSURLErrorNotConnectedToInternet: return "Похоже, нет интернета"
+            case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost, NSURLErrorDNSLookupFailed:
+                return "Адрес не отвечает. В России его часто блокируют — выручает VPN или свой ключ в настройках"
+            case NSURLErrorNetworkConnectionLost: return "Связь оборвалась. Попробуй ещё раз"
+            case NSURLErrorCancelled:            return "Запрос прервался. Попробуй ещё раз"
+            default:                             return "Что-то не так со связью"
+            }
+        }
+    }
 
     var errorDescription: String? {
         switch self {
         case .disabled:           return "AI отключён в настройках"
         case .emptyText:          return "Пустой текст"
+        case .unreachable:        return "Все адреса недоступны"
         case .http(let s, let b): return "HTTP \(s): \(b.prefix(120))"
         case .decode(let m):      return "Ответ невалидный: \(m)"
         case .network(let e):     return "Сеть: \(e.localizedDescription)"
+        }
+    }
+
+    /// Стоит ли пробовать другой адрес.
+    var worthRetryingElsewhere: Bool {
+        switch self {
+        case .network:            return true
+        case .http(let code, _):  return code == 0 || code >= 500
+        case .unreachable:        return true
+        default:                  return false
         }
     }
 }
@@ -61,8 +105,37 @@ enum LLMPolisher {
         return await polishViaWorker(text)
     }
 
+    /// Адреса пробуются по очереди: основной домен в России нередко заблокирован,
+    /// и запасной может оказаться живым без всякого VPN.
+    private static func workerCandidates() -> [String] {
+        var list = [Settings.shared.aiWorkerURL]
+        for mirror in Settings.shared.aiMirrorURLs where !mirror.isEmpty {
+            if !list.contains(mirror) { list.append(mirror) }
+        }
+        return list
+    }
+
     private static func polishViaWorker(_ text: String) async -> Result<String, LLMPolishError> {
-        let urlString = Settings.shared.aiWorkerURL
+        var lastError: LLMPolishError = .unreachable
+
+        for urlString in workerCandidates() {
+            let result = await requestWorker(urlString, text: text)
+            switch result {
+            case .success(let out):
+                LLMTransport.noteSuccess()
+                return .success(out)
+            case .failure(let error):
+                lastError = error
+                guard error.worthRetryingElsewhere else { return .failure(error) }
+                // Считаем только сетевые: 5xx и опечатка в адресе соединением не лечатся.
+                if case .network = error { LLMTransport.noteFailure() }
+                Log.hotkey.info("адрес не ответил, пробую следующий")
+            }
+        }
+        return .failure(lastError)
+    }
+
+    private static func requestWorker(_ urlString: String, text: String) async -> Result<String, LLMPolishError> {
         guard let url = URL(string: urlString) else {
             return .failure(.http(0, "Invalid worker URL: \(urlString)"))
         }
@@ -75,13 +148,13 @@ enum LLMPolisher {
             return .failure(.decode("encode body"))
         }
 
-        var req = URLRequest(url: url, timeoutInterval: 12)
+        var req = URLRequest(url: url, timeoutInterval: 15)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = payload
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await LLMTransport.current().data(for: req)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status != 200 {
                 let bodyStr = String(data: data, encoding: .utf8) ?? "<binary>"
@@ -134,7 +207,7 @@ enum LLMPolisher {
         req.httpBody = payload
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let (data, response) = try await LLMTransport.current().data(for: req)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status != 200 {
                 let bodyStr = String(data: data, encoding: .utf8) ?? "<binary>"
@@ -149,8 +222,10 @@ enum LLMPolisher {
                   let content = message["content"] as? String, !content.isEmpty else {
                 return .failure(.decode("no choices[0].message.content"))
             }
+            LLMTransport.noteSuccess()
             return .success(content.trimmingCharacters(in: .whitespacesAndNewlines))
         } catch {
+            LLMTransport.noteFailure()
             return .failure(.network(error))
         }
     }
